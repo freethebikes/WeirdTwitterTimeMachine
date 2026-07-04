@@ -169,8 +169,13 @@ a:hover { text-decoration: underline; }
   border-bottom: 1px solid #e8e8e8;
   border-radius: 6px 6px 0 0;
   padding: 10px 12px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
 }
 .stream-header h1 { font-size: 14px; }
+.stream-filter { margin-left: auto; font-size: 12px; color: #999; }
+.stream-filter b { color: #333; }
 .timeline {
   background: #fff;
   border: 1px solid rgba(0, 0, 0, 0.1);
@@ -190,9 +195,12 @@ a:hover { text-decoration: underline; }
 .tweet:hover { background: #f6f9fb; }
 .tweet .avatar { width: 48px; height: 48px; border-radius: 5px; flex-shrink: 0; }
 .tweet-body { flex: 1; min-width: 0; }
+.tweet.filtered-out { display: none; }
 .tweet-head { display: flex; align-items: baseline; gap: 5px; }
 .tweet-head .fullname { font-weight: bold; color: #333; font-size: 14px; }
 .tweet-head .username { color: #999; font-size: 12px; }
+.tweet-head .fullname, .tweet-head .username { cursor: pointer; }
+.tweet-head .fullname:hover, .tweet-head .username:hover { text-decoration: underline; color: #0084b4; }
 .tweet-head .timestamp { margin-left: auto; color: #999; font-size: 12px; white-space: nowrap; }
 .tweet-head .timestamp a { color: #999; }
 .reply-context { font-size: 12px; color: #999; margin: 1px 0; }
@@ -283,6 +291,20 @@ a:hover { text-decoration: underline; }
 
 /* ---- empty / loading states ---- */
 .state-box { padding: 28px 20px; text-align: center; color: #666; font-size: 14px; }
+.state-box.search-status { padding: 12px; font-size: 12px; color: #999; border-bottom: 1px solid #e8e8e8; }
+.search-stop {
+  background: linear-gradient(#fff, #f0f0f0);
+  border: 1px solid #cbd6db;
+  border-radius: 4px;
+  padding: 2px 10px;
+  font-size: 11px;
+  font-weight: bold;
+  color: #333;
+  cursor: pointer;
+  margin-left: 6px;
+}
+.search-stop:hover { background: #f0f8fc; border-color: #a8c7d8; }
+.state-box.filter-empty { padding: 14px; font-size: 13px; border-bottom: 1px solid #e8e8e8; }
 .state-box .state-links { margin-top: 10px; font-size: 13px; }
 .state-box .state-links a { margin: 0 8px; font-weight: bold; }
 

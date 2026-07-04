@@ -36,7 +36,10 @@
   let days = []; // sorted days that have posts
   let monthsWithData = new Set(); // "YYYY-MM" prefixes that appear in index.dayCounts
   let currentDay = null;
+  let currentView = "day"; // "day" | "likes" | "search"
   let lastTweets = []; // tweets currently on screen (for the time-of-day jump)
+  let userFilter = null; // screen_name to isolate, or null for everyone
+  let searchSeq = 0; // bumps on every view change; cancels in-flight search scans
   const monthCache = new Map();
   let legacyIds = null; // data/legacy-ids.json, loaded lazily
 
@@ -282,6 +285,8 @@
   }
 
   async function renderLikes() {
+    searchSeq++;
+    currentView = "likes";
     document.title = "Your Recovered Likes — Weird Twitter Time Machine";
     timeline.innerHTML = `<div class="state-box">looking through your likes…</div>`;
     document.querySelectorAll("#yearList a").forEach((a) => a.classList.remove("active"));
@@ -317,13 +322,108 @@
     }
     timeline.innerHTML =
       `<div class="state-box likes-back"><a href="#/${esc(goldenRandomDay())}">← back to the time machine</a></div>` +
-      tweets.map((t) => tweetHtml(t, replies[t.id])).join("");
-    timeline.querySelectorAll(".act-reply").forEach((a) => {
-      a.addEventListener("click", (e) => {
-        e.preventDefault();
-        attachComposer(a.closest(".tweet"));
-      });
-    });
+      tweets.map((t) => tweetHtml(t, replies[t.id], { dayLink: true })).join("");
+    applyUserFilter();
+  }
+
+  /* ---------- search ---------- */
+
+  const SEARCH_CAP = 200;
+
+  // "from:user" isolates an account; everything else is a substring match
+  function parseQuery(q) {
+    const terms = [];
+    let from = null;
+    for (const tok of q.trim().split(/\s+/)) {
+      const m = tok.match(/^from:@?(\w{1,20})$/i);
+      if (m) from = m[1].toLowerCase();
+      else if (tok) terms.push(tok.toLowerCase());
+    }
+    return { from, text: terms.join(" ") };
+  }
+
+  async function renderSearch(q) {
+    const seq = ++searchSeq;
+    currentView = "search";
+    document.title = `${q} — Search — Weird Twitter Time Machine`;
+    $("#topSearch").value = q;
+    document.querySelectorAll("#yearList a").forEach((a) => a.classList.remove("active"));
+    $("#dayCount").textContent = "";
+
+    const { from, text } = parseQuery(q);
+    if (!from && !text) {
+      timeline.innerHTML = `<div class="state-box">Type a word to search for — or <code>from:username</code> to see one account.</div>`;
+      return;
+    }
+
+    timeline.innerHTML = `
+      <div class="state-box search-status" id="searchStatus"></div>
+      <div id="searchResults"></div>`;
+    const statusEl = $("#searchStatus");
+    const resultsEl = $("#searchResults");
+    const matches = [];
+    const matchTweet = (t) =>
+      (!from || t.user.toLowerCase() === from) && (!text || t.text.toLowerCase().includes(text));
+    const addResults = (found) => {
+      matches.push(...found);
+      if (found.length) {
+        resultsEl.insertAdjacentHTML("beforeend", found.map((t) => tweetHtml(t, null, { dayLink: true })).join(""));
+        applyUserFilter();
+      }
+    };
+
+    if (useSupabase) {
+      statusEl.textContent = "searching…";
+      const params = [];
+      // PostgREST "reserved character" quoting: wrap the pattern in double quotes
+      if (text) params.push(`text=ilike."*${encodeURIComponent(text.replace(/"/g, ""))}*"`);
+      if (from) params.push(`screen_name=ilike.${encodeURIComponent(from)}`);
+      try {
+        const rows = await sbFetch(`tweets?${params.join("&")}&order=created_at.desc&limit=${SEARCH_CAP}`);
+        if (seq !== searchSeq) return;
+        addResults(rows.map(fromRow));
+        statusEl.textContent = matches.length
+          ? `${matches.length}${matches.length === SEARCH_CAP ? "+" : ""} matches`
+          : `nothing in the archive matches "${q}"`;
+      } catch (err) {
+        statusEl.textContent = `search failed (${err.message})`;
+      }
+      lastTweets = matches;
+      return;
+    }
+
+    // static mode: stream through the month files, newest first
+    const months = [...monthsWithData].sort().reverse();
+    let stopped = false;
+    statusEl.innerHTML = `<span id="searchProgress">searching…</span> <button id="searchStop" class="search-stop">Stop</button>`;
+    $("#searchStop").addEventListener("click", () => { stopped = true; });
+
+    let lastMonth = "";
+    for (let i = 0; i < months.length; i++) {
+      if (seq !== searchSeq) return; // user moved on; a newer view owns the timeline
+      if (stopped || matches.length >= SEARCH_CAP) break;
+      lastMonth = months[i];
+      let tweets = [];
+      try {
+        tweets = await monthTweets(lastMonth);
+      } catch {
+        /* skip months that fail to load */
+      }
+      if (seq !== searchSeq) return;
+      const found = tweets.filter(matchTweet).sort((a, b) => b.ts - a.ts);
+      addResults(found.slice(0, SEARCH_CAP - matches.length));
+      const progress = $("#searchProgress");
+      if (progress) progress.textContent = `${matches.length} match${matches.length === 1 ? "" : "es"} · searched back to ${lastMonth} (${i + 1}/${months.length} months)`;
+    }
+    if (seq !== searchSeq) return;
+    statusEl.textContent = !matches.length
+      ? `nothing in the archive matches "${q}"`
+      : matches.length >= SEARCH_CAP
+        ? `first ${SEARCH_CAP} matches, newest first (stopped at ${lastMonth})`
+        : stopped
+          ? `${matches.length} matches · stopped at ${lastMonth}`
+          : `${matches.length} matches across the whole archive`;
+    lastTweets = matches;
   }
 
   /* ---------- navigation ---------- */
@@ -331,6 +431,11 @@
   function dayFromHash() {
     const m = location.hash.match(/^#\/(\d{4}-\d{2}-\d{2})$/);
     return m ? m[1] : null;
+  }
+
+  function searchFromHash() {
+    const m = location.hash.match(/^#\/search\/(.*)$/);
+    return m ? decodeURIComponent(m[1]) : null;
   }
 
   function goldenRandomDay() {
@@ -377,6 +482,38 @@
     if (el) el.scrollIntoView({ block: "start", behavior: "smooth" });
   }
 
+  // hide every tweet that isn't by userFilter; label the stream header
+  function applyUserFilter() {
+    const tweetsEls = timeline.querySelectorAll(".tweet");
+    let visible = 0;
+    tweetsEls.forEach((el) => {
+      const hide = Boolean(userFilter) && el.dataset.user !== userFilter;
+      el.classList.toggle("filtered-out", hide);
+      if (!hide) visible++;
+    });
+
+    $("#streamFilter").innerHTML = userFilter
+      ? `only <b>@${esc(userFilter)}</b> · <a href="#" id="clearFilter">show everyone</a>`
+      : "";
+
+    let note = timeline.querySelector(".filter-empty");
+    if (userFilter && !visible && tweetsEls.length) {
+      if (!note) {
+        note = document.createElement("div");
+        note.className = "state-box filter-empty";
+        timeline.prepend(note);
+      }
+      note.textContent = `@${userFilter} has no posts here.`;
+    } else if (note) {
+      note.remove();
+    }
+  }
+
+  function toggleUserFilter(screenName) {
+    userFilter = userFilter === screenName ? null : screenName;
+    applyUserFilter();
+  }
+
   function renderSidebar(dayTweets) {
     const count = index.dayCounts[currentDay] || dayTweets.length;
     const voices = new Set(dayTweets.map((t) => t.user)).size;
@@ -415,7 +552,7 @@
       </div>`;
   }
 
-  function tweetHtml(t, replies) {
+  function tweetHtml(t, replies, opts = {}) {
     const u = users.get(t.user) || { name: t.user, avatar: "" };
     const avatar = u.avatar || "assets/egg.svg";
     const time = timeFmt.format(new Date(t.ts * 1000));
@@ -428,12 +565,12 @@
       : "";
     const futureReplies = (replies || []).map(replyHtml).join("");
     return `
-      <article class="tweet" data-id="${esc(t.id)}">
+      <article class="tweet" data-id="${esc(t.id)}" data-user="${esc(t.user)}">
         <img class="avatar" src="${esc(avatar)}" alt="">
         <div class="tweet-body">
           <div class="tweet-head">
-            <span class="fullname">${esc(u.name)}</span>
-            <span class="username">@${esc(t.user)}</span>
+            <span class="fullname" title="Show only @${esc(t.user)}">${esc(u.name)}</span>
+            <span class="username" title="Show only @${esc(t.user)}">@${esc(t.user)}</span>
             <span class="timestamp"><a href="${esc(originalUrl(t))}" target="_blank" rel="noopener" title="${esc(longFmt.format(dayDate(t.day)))} — view original on Twitter">${time}</a></span>
           </div>
           ${ctx}
@@ -446,6 +583,7 @@
           <div class="tweet-actions">
             <a href="#" class="act-reply">Reply</a>
             <a href="${esc(originalUrl(t))}" target="_blank" rel="noopener">View original ↗</a>
+            ${opts.dayLink ? `<a href="#/${esc(t.day)}">Time-travel to this day</a>` : ""}
           </div>
           <div class="future-replies" ${futureReplies ? "" : "hidden"}>${futureReplies}</div>
           <div class="composer-slot"></div>
@@ -514,6 +652,8 @@
   }
 
   async function render() {
+    searchSeq++;
+    currentView = "day";
     const day = currentDay;
     document.title = `${longFmt.format(dayDate(day))} — Weird Twitter Time Machine`;
     timeline.innerHTML = `<div class="state-box">loading the past…</div>`;
@@ -551,12 +691,7 @@
       /* replies are decoration; the timeline must still render */
     }
     timeline.innerHTML = tweets.map((t) => tweetHtml(t, replies[t.id])).join("");
-    timeline.querySelectorAll(".act-reply").forEach((a) => {
-      a.addEventListener("click", (e) => {
-        e.preventDefault();
-        attachComposer(a.closest(".tweet"));
-      });
-    });
+    applyUserFilter();
 
     if ($("#autoScroll").checked) requestAnimationFrame(scrollToNow);
   }
@@ -589,8 +724,39 @@
     });
     window.addEventListener("hashchange", () => {
       if (location.hash === "#/likes") { renderLikes(); return; }
+      const q = searchFromHash();
+      if (q !== null) { renderSearch(q); return; }
       const d = dayFromHash();
-      if (d && d !== currentDay) setDay(d, false);
+      if (d && (d !== currentDay || currentView !== "day")) setDay(d, false);
+    });
+
+    // reply + name-click handling is delegated so it also covers
+    // search results, which stream into the timeline in batches
+    timeline.addEventListener("click", (e) => {
+      const reply = e.target.closest(".act-reply");
+      if (reply) {
+        e.preventDefault();
+        attachComposer(reply.closest(".tweet"));
+        return;
+      }
+      const name = e.target.closest(".fullname, .username");
+      if (name) toggleUserFilter(name.closest(".tweet").dataset.user);
+    });
+    $("#streamFilter").addEventListener("click", (e) => {
+      if (e.target.closest("#clearFilter")) {
+        e.preventDefault();
+        toggleUserFilter(null);
+      }
+    });
+
+    const topSearch = $("#topSearch");
+    topSearch.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      const q = topSearch.value.trim();
+      if (!q) return;
+      const hash = `#/search/${encodeURIComponent(q)}`;
+      if (location.hash === hash) renderSearch(q); // hashchange won't fire on a repeat
+      else location.hash = hash;
     });
 
     monthsWithData = new Set(days.map((d) => d.slice(0, 7)));
@@ -643,8 +809,11 @@
       }
     });
 
+    const bootSearch = searchFromHash();
     if (location.hash === "#/likes") {
       renderLikes();
+    } else if (bootSearch !== null) {
+      renderSearch(bootSearch);
     } else {
       setDay(dayFromHash() || goldenRandomDay());
     }
