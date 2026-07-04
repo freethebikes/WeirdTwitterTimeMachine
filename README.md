@@ -23,7 +23,9 @@ Live site: https://freethebikes.github.io/WeirdTwitterTimeMachine/
   against dril-archive overlap. Only original posts are merged into the site —
   @-replies and RTs (two-thirds of the ~5M recovered tweets) are left out,
   both for size and because a timeline never showed strangers' replies. The
-  complete unfiltered data lives in `data/cooltweets/` (gitignored).
+  complete unfiltered data (locally in gitignored `data/cooltweets/`) is
+  published at
+  [freethebikes/cooltweets-archive](https://github.com/freethebikes/cooltweets-archive).
 
 ## Running modes
 
