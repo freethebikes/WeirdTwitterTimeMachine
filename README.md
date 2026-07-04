@@ -27,6 +27,21 @@ Live site: https://freethebikes.github.io/WeirdTwitterTimeMachine/
   published at
   [freethebikes/cooltweets-archive](https://github.com/freethebikes/cooltweets-archive).
 
+## Find Your Likes
+
+The sidebar has a "Find Your Likes" panel: upload the `like.js` file from
+your own X data archive (Settings → Download an archive of your data →
+`data/like.js`) and it checks every liked tweet ID against the archive,
+entirely client-side.
+
+Real (post-2010-11-04) tweet IDs are Snowflake IDs that encode their own
+creation timestamp, so the browser decodes each liked ID's day directly (no
+lookup needed) to know which `tweets-YYYY-MM.json` file to check it against.
+The small sliver of pre-Snowflake tweets (sequential IDs, no embedded
+timestamp) are matched against `docs/data/legacy-ids.json`, a small
+id → day index built by `scripts/build-likes-index.mjs`. In Supabase mode,
+matching is a direct `id=in.(...)` query instead.
+
 ## Running modes
 
 The site works two ways, controlled by `docs/js/config.js`:
@@ -59,11 +74,14 @@ The site works two ways, controlled by `docs/js/config.js`:
 node scripts/prepare-data.mjs path/to/dril.json   # dril, from dril-archive
 node scripts/scrape-cooltweets.mjs                # recover Cool Tweets from Wayback
 node scripts/merge-cooltweets.mjs                 # fold them into docs/data/
+node scripts/build-likes-index.mjs                # rebuild legacy-ids.json for Find Your Likes
 ```
 
 `prepare-data.mjs` rewrites `docs/data/` with dril only, so always run
 `merge-cooltweets.mjs` after it. The scraper caches everything under `data/`
 (gitignored) and is safe to re-run; it only downloads what's missing.
+`build-likes-index.mjs` should run last, after `docs/data/tweets-*.json` is
+final.
 
 ## Local development
 

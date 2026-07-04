@@ -33,11 +33,29 @@
         <button id="nextDay" title="Next day with posts">▶</button>
       </div>
       <button id="randomDay" class="tm-random">Take me to a random day</button>
+      <label class="tm-autoscroll" title="On load, jump to the tweets posted around the current time of day">
+        <input type="checkbox" id="autoScroll"> jump to the current time of day
+      </label>
       <p class="tm-count" id="dayCount"></p>
       <p class="tm-mode" id="dataMode"></p>
     </section>
 
-    <section class="module profile" id="profileCard"></section>
+    <section class="module likes">
+      <h2>💛 Find Your Likes</h2>
+      <p class="li-blurb">Upload the <code>like.js</code> file from your X data archive (Settings → Download an archive of your data) to see which of your likes turned up here.</p>
+      <input type="file" id="likesFile" accept=".js,.json" multiple>
+      <div class="li-status" id="likesStatus"></div>
+      <div class="li-progress" id="likesProgress" hidden>
+        <div class="li-progress-track"><div class="li-progress-fill" id="likesProgressFill"></div></div>
+        <span id="likesProgressText"></span>
+      </div>
+      <a href="#/likes" class="li-view" id="likesViewLink" hidden>View your recovered likes →</a>
+    </section>
+
+    <section class="module years">
+      <h2>This day in…</h2>
+      <ul id="yearList" class="year-list"></ul>
+    </section>
 
     <section class="module trends">
       <h2>Trends <span class="muted">· Worldwide</span></h2>

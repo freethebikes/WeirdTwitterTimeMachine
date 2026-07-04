@@ -16,6 +16,16 @@
   const REPLY_LIMIT = 140; // it's the past; you get 140 characters
   const LS_REPLIES = "wttm-replies";
   const LS_AUTHOR = "wttm-author";
+  const LS_AUTOSCROLL = "wttm-autoscroll";
+  const LS_LIKES = "wttm-likes-matches";
+
+  // Twitter switched tweet IDs from small sequential integers to Snowflake
+  // IDs (which encode their creation time) on 2010-11-04. Snowflake IDs
+  // start in the low quadrillions and only grow from there, so 10^12 sits
+  // safely in the gap between the two schemes — keep in sync with
+  // scripts/build-likes-index.mjs.
+  const SNOWFLAKE_MIN = 1000000000000n;
+  const TWITTER_EPOCH_MS = 1288834974657n;
 
   const $ = (sel) => document.querySelector(sel);
   const timeline = $("#timeline");
@@ -24,8 +34,11 @@
   let index = null; // data/index.json
   let users = new Map(); // screen_name -> profile
   let days = []; // sorted days that have posts
+  let monthsWithData = new Set(); // "YYYY-MM" prefixes that appear in index.dayCounts
   let currentDay = null;
+  let lastTweets = []; // tweets currently on screen (for the time-of-day jump)
   const monthCache = new Map();
+  let legacyIds = null; // data/legacy-ids.json, loaded lazily
 
   /* ---------- tiny utils ---------- */
 
@@ -44,6 +57,24 @@
   // "2013-03-12" -> Date at noon UTC (safe for date-only formatting)
   const dayDate = (day) => new Date(day + "T12:00:00Z");
   const fmtNum = (n) => (n >= 1000 ? n.toLocaleString("en-US") : String(n));
+
+  const nyDayFmt = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" });
+
+  const hmFmt = new Intl.DateTimeFormat("en-US", { timeZone: TZ, hourCycle: "h23", hour: "2-digit", minute: "2-digit" });
+  function minuteOfDay(date) {
+    const p = hmFmt.formatToParts(date);
+    const get = (type) => Number(p.find((x) => x.type === type).value);
+    return get("hour") * 60 + get("minute");
+  }
+
+  // today's month-day transplanted into another year (Feb 29 clamps to 28)
+  function todayInYear(year) {
+    const p = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+    const get = (type) => p.find((x) => x.type === type).value;
+    let mmdd = `${get("month")}-${get("day")}`;
+    if (mmdd === "02-29" && (year % 4 !== 0 || (year % 100 === 0 && year % 400 !== 0))) mmdd = "02-28";
+    return `${year}-${mmdd}`;
+  }
 
   function linkify(text) {
     return esc(text)
@@ -125,6 +156,176 @@
     return reply;
   }
 
+  /* ---------- find your likes ---------- */
+
+  // Parses the like.js file from an X ("Download an archive of your data")
+  // export: `window.YTD.like.part0 = [ { "like": { "tweetId": "..." } }, ... ]`
+  function parseLikesFile(text) {
+    const start = text.indexOf("[");
+    if (start < 0) return [];
+    let data;
+    try {
+      data = JSON.parse(text.slice(start));
+    } catch {
+      return [];
+    }
+    if (!Array.isArray(data)) return [];
+    return data
+      .map((entry) => (entry && entry.like ? entry.like.tweetId : entry && entry.tweetId) || null)
+      .filter(Boolean)
+      .map(String);
+  }
+
+  // Snowflake IDs encode their creation time: the top bits (after the low
+  // 22 sequence/machine bits) are milliseconds since the Twitter epoch.
+  // This works for ANY Snowflake-era tweet ID, not just ones in our
+  // archive — it just tells us which day (and thus which tweets-*.json
+  // file) to check for a match.
+  function snowflakeDay(idStr) {
+    try {
+      const ms = Number((BigInt(idStr) >> 22n) + TWITTER_EPOCH_MS);
+      return nyDayFmt.format(new Date(ms));
+    } catch {
+      return null;
+    }
+  }
+
+  async function loadLegacyIds() {
+    if (!legacyIds) {
+      try {
+        const res = await fetch("data/legacy-ids.json");
+        legacyIds = res.ok ? await res.json() : {};
+      } catch {
+        legacyIds = {};
+      }
+    }
+    return legacyIds;
+  }
+
+  async function monthTweets(month) {
+    if (!monthCache.has(month)) {
+      const res = await fetch(`data/tweets-${month}.json`);
+      monthCache.set(month, res.ok ? await res.json() : []);
+    }
+    return monthCache.get(month);
+  }
+
+  async function matchLikesStatic(ids, onProgress) {
+    const legacy = await loadLegacyIds();
+    const byMonth = new Map(); // "YYYY-MM" -> Set of candidate ids that might land in that month
+
+    for (const id of ids) {
+      const day = /^\d+$/.test(id) && BigInt(id) < SNOWFLAKE_MIN ? legacy[id] : snowflakeDay(id);
+      if (!day) continue; // pre-Snowflake id we don't recognize, or unparseable
+      const month = day.slice(0, 7);
+      if (!monthsWithData.has(month)) continue;
+      if (!byMonth.has(month)) byMonth.set(month, new Set());
+      byMonth.get(month).add(id);
+    }
+
+    const months = [...byMonth.keys()];
+    const results = [];
+    let done = 0;
+    let cursor = 0;
+    async function worker() {
+      while (cursor < months.length) {
+        const month = months[cursor++];
+        let tweets = [];
+        try {
+          tweets = await monthTweets(month);
+        } catch {
+          /* skip months that fail to load */
+        }
+        const wanted = byMonth.get(month);
+        for (const t of tweets) if (wanted.has(t.id)) results.push(t);
+        done++;
+        if (onProgress) onProgress(done, months.length);
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(6, months.length) }, worker));
+    return results;
+  }
+
+  async function matchLikesSupabase(ids, onProgress) {
+    const CHUNK = 150;
+    const chunks = [];
+    for (let i = 0; i < ids.length; i += CHUNK) chunks.push(ids.slice(i, i + CHUNK));
+    const results = [];
+    let done = 0;
+    for (const chunk of chunks) {
+      try {
+        results.push(...(await sbFetch(`tweets?id=in.(${chunk.join(",")})&select=*`)).map(fromRow));
+      } catch {
+        /* skip failed chunk */
+      }
+      done++;
+      if (onProgress) onProgress(done, chunks.length);
+    }
+    return results;
+  }
+
+  function matchLikes(ids, onProgress) {
+    return useSupabase ? matchLikesSupabase(ids, onProgress) : matchLikesStatic(ids, onProgress);
+  }
+
+  function saveLikesMatches(totalLikes, matches) {
+    const compact = matches.map((t) => ({ id: t.id, day: t.day }));
+    localStorage.setItem(LS_LIKES, JSON.stringify({ totalLikes, matches: compact }));
+  }
+
+  function loadLikesMatches() {
+    try {
+      return JSON.parse(localStorage.getItem(LS_LIKES) || "null");
+    } catch {
+      return null;
+    }
+  }
+
+  async function renderLikes() {
+    document.title = "Your Recovered Likes — Weird Twitter Time Machine";
+    timeline.innerHTML = `<div class="state-box">looking through your likes…</div>`;
+    document.querySelectorAll("#yearList a").forEach((a) => a.classList.remove("active"));
+
+    const cached = loadLikesMatches();
+    if (!cached || !cached.matches.length) {
+      timeline.innerHTML = `<div class="state-box">No recovered likes yet. Upload your <code>like.js</code> file in the "Find Your Likes" panel to get started.</div>`;
+      $("#dayCount").textContent = "";
+      return;
+    }
+    $("#dayCount").textContent = `${cached.matches.length} of your ${cached.totalLikes.toLocaleString()} likes found in this archive.`;
+
+    let tweets;
+    if (useSupabase) {
+      const rows = await sbFetch(`tweets?id=in.(${cached.matches.map((m) => m.id).join(",")})&select=*`);
+      tweets = rows.map(fromRow);
+    } else {
+      const months = [...new Set(cached.matches.map((m) => m.day.slice(0, 7)))];
+      await Promise.all(months.map(monthTweets));
+      const wanted = new Set(cached.matches.map((m) => m.id));
+      tweets = months.flatMap((m) => monthCache.get(m) || []).filter((t) => wanted.has(t.id));
+    }
+
+    if (location.hash !== "#/likes") return; // user navigated away mid-load
+
+    tweets.sort((a, b) => b.ts - a.ts);
+    lastTweets = tweets;
+    let replies = {};
+    try {
+      replies = await repliesFor(tweets.map((t) => t.id));
+    } catch {
+      /* replies are decoration; the timeline must still render */
+    }
+    timeline.innerHTML =
+      `<div class="state-box likes-back"><a href="#/${esc(goldenRandomDay())}">← back to the time machine</a></div>` +
+      tweets.map((t) => tweetHtml(t, replies[t.id])).join("");
+    timeline.querySelectorAll(".act-reply").forEach((a) => {
+      a.addEventListener("click", (e) => {
+        e.preventDefault();
+        attachComposer(a.closest(".tweet"));
+      });
+    });
+  }
+
   /* ---------- navigation ---------- */
 
   function dayFromHash() {
@@ -158,6 +359,24 @@
 
   /* ---------- rendering ---------- */
 
+  function renderYears() {
+    $("#yearList").innerHTML = index.years
+      .map((y) => `<li><a href="#/${todayInYear(Number(y))}" data-year="${esc(y)}">${esc(y)}</a></li>`)
+      .join("");
+  }
+
+  function scrollToNow() {
+    if (!lastTweets.length) return;
+    const nowMin = minuteOfDay(new Date());
+    let best = null;
+    for (const t of lastTweets) {
+      const diff = Math.abs(minuteOfDay(new Date(t.ts * 1000)) - nowMin);
+      if (!best || diff < best.diff) best = { id: t.id, diff };
+    }
+    const el = timeline.querySelector(`[data-id="${CSS.escape(best.id)}"]`);
+    if (el) el.scrollIntoView({ block: "start", behavior: "smooth" });
+  }
+
   function renderSidebar(dayTweets) {
     const count = index.dayCounts[currentDay] || dayTweets.length;
     const voices = new Set(dayTweets.map((t) => t.user)).size;
@@ -168,35 +387,23 @@
       ? "posts + replies served from Supabase"
       : "static archive mode — replies are saved in this browser only";
 
+    const year = currentDay.slice(0, 4);
+    document.querySelectorAll("#yearList a").forEach((a) => {
+      a.classList.toggle("active", a.dataset.year === year);
+    });
+
     const tags = [...new Set(dayTweets.flatMap((t) => (t.text.match(/#\w+/g) || [])))].slice(0, 6);
     const canned = ["#TeamFollowBack", "Corn", "The Economy", "#FF", "Doritos", "girther movement"];
     $("#trendList").innerHTML = (tags.length ? tags : canned)
       .map((h) => `<li>${esc(h)}</li>`)
       .join("");
 
-    const year = currentDay.slice(0, 4);
     $("#pageFooter").innerHTML =
       `© ${esc(year)} Weird Twitter Time Machine · ` +
       `posts by <a href="https://twitter.com/dril" target="_blank" rel="noopener">@dril</a> and the weird twitter greats · ` +
       `data from the <a href="https://github.com/codemasher/dril-archive" target="_blank" rel="noopener">dril-archive</a> ` +
       `and <a href="https://web.archive.org/web/2022/https://cooltweets.herokuapp.com/" target="_blank" rel="noopener">Cool Tweets</a> (via the Wayback Machine) · ` +
       `<a href="https://github.com/freethebikes/WeirdTwitterTimeMachine" target="_blank" rel="noopener">source</a>`;
-  }
-
-  function renderProfile() {
-    const u = users.get("dril");
-    if (!u) return;
-    $("#profileCard").innerHTML = `
-      <div class="p-head">
-        <img src="${esc(u.avatar)}" alt="">
-        <div><div class="p-name">${esc(u.name)}</div><div class="p-handle">@${esc(u.screen_name)}</div></div>
-      </div>
-      <p class="p-bio">${linkify(u.description || "")}</p>
-      <div class="p-stats">
-        <div><strong>${fmtNum(u.statuses)}</strong> Tweets</div>
-        <div><strong>${fmtNum(u.following)}</strong> Following</div>
-        <div><strong>${fmtNum(u.followers)}</strong> Followers</div>
-      </div>`;
   }
 
   function replyHtml(r) {
@@ -320,6 +527,7 @@
     if (day !== currentDay) return; // user has moved on mid-load
 
     renderSidebar(tweets);
+    lastTweets = tweets;
 
     if (!tweets.length) {
       const prev = neighborDay(currentDay, -1);
@@ -349,6 +557,8 @@
         attachComposer(a.closest(".tweet"));
       });
     });
+
+    if ($("#autoScroll").checked) requestAnimationFrame(scrollToNow);
   }
 
   /* ---------- boot ---------- */
@@ -362,7 +572,14 @@
     dayPicker.min = index.minDay;
     dayPicker.max = index.maxDay;
 
-    renderProfile();
+    renderYears();
+
+    const autoScroll = $("#autoScroll");
+    autoScroll.checked = localStorage.getItem(LS_AUTOSCROLL) === "1";
+    autoScroll.addEventListener("change", () => {
+      localStorage.setItem(LS_AUTOSCROLL, autoScroll.checked ? "1" : "0");
+      if (autoScroll.checked) scrollToNow();
+    });
 
     $("#prevDay").addEventListener("click", () => setDay(neighborDay(currentDay, -1)));
     $("#nextDay").addEventListener("click", () => setDay(neighborDay(currentDay, +1)));
@@ -371,11 +588,66 @@
       if (dayPicker.value) setDay(dayPicker.value);
     });
     window.addEventListener("hashchange", () => {
+      if (location.hash === "#/likes") { renderLikes(); return; }
       const d = dayFromHash();
       if (d && d !== currentDay) setDay(d, false);
     });
 
-    setDay(dayFromHash() || goldenRandomDay());
+    monthsWithData = new Set(days.map((d) => d.slice(0, 7)));
+
+    const likesFile = $("#likesFile");
+    const likesStatus = $("#likesStatus");
+    const likesProgress = $("#likesProgress");
+    const likesProgressFill = $("#likesProgressFill");
+    const likesProgressText = $("#likesProgressText");
+    const likesViewLink = $("#likesViewLink");
+
+    const cachedLikes = loadLikesMatches();
+    if (cachedLikes && cachedLikes.matches.length) {
+      likesStatus.textContent = `Found ${cachedLikes.matches.length} of ${cachedLikes.totalLikes.toLocaleString()} likes in this archive.`;
+      likesViewLink.hidden = false;
+    }
+
+    likesFile.addEventListener("change", async () => {
+      const files = Array.from(likesFile.files || []);
+      if (!files.length) return;
+      likesViewLink.hidden = true;
+      likesProgress.hidden = false;
+      likesProgressFill.style.width = "0%";
+      likesProgressText.textContent = "";
+      likesStatus.textContent = "Reading file…";
+      try {
+        const texts = await Promise.all(files.map((f) => f.text()));
+        const ids = [...new Set(texts.flatMap(parseLikesFile))];
+        if (!ids.length) {
+          likesProgress.hidden = true;
+          likesStatus.textContent = "Couldn't find any likes in that file — make sure it's like.js from your X archive.";
+          return;
+        }
+        likesStatus.textContent = `Checking ${ids.length.toLocaleString()} likes against the archive…`;
+        const matches = await matchLikes(ids, (done, total) => {
+          const pct = Math.round((done / total) * 100);
+          likesProgressFill.style.width = `${pct}%`;
+          likesProgressText.textContent = `${pct}%`;
+        });
+        likesProgress.hidden = true;
+        saveLikesMatches(ids.length, matches);
+        likesStatus.textContent = matches.length
+          ? `Found ${matches.length} of ${ids.length.toLocaleString()} likes in this archive!`
+          : `None of your ${ids.length.toLocaleString()} likes turned up in this archive.`;
+        likesViewLink.hidden = matches.length === 0;
+        if (location.hash === "#/likes") renderLikes();
+      } catch (err) {
+        likesProgress.hidden = true;
+        likesStatus.textContent = `Couldn't process that file (${err.message}).`;
+      }
+    });
+
+    if (location.hash === "#/likes") {
+      renderLikes();
+    } else {
+      setDay(dayFromHash() || goldenRandomDay());
+    }
   }
 
   boot().catch((err) => {
