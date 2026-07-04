@@ -65,17 +65,17 @@ const out = tweets
 const dataDir = join(root, "docs", "data");
 mkdirSync(dataDir, { recursive: true });
 
-// per-year tweet files, keyed by the New York calendar year of the post
-const byYear = new Map();
+// per-month tweet files, keyed by the New York calendar month of the post
+const byMonth = new Map();
 const dayCounts = {};
 for (const t of out) {
-  const year = t.day.slice(0, 4);
-  if (!byYear.has(year)) byYear.set(year, []);
-  byYear.get(year).push(t);
+  const month = t.day.slice(0, 7);
+  if (!byMonth.has(month)) byMonth.set(month, []);
+  byMonth.get(month).push(t);
   dayCounts[t.day] = (dayCounts[t.day] || 0) + 1;
 }
-for (const [year, rows] of byYear) {
-  writeFileSync(join(dataDir, `tweets-${year}.json`), JSON.stringify(rows));
+for (const [month, rows] of byMonth) {
+  writeFileSync(join(dataDir, `tweets-${month}.json`), JSON.stringify(rows));
 }
 
 // index: date range, per-day post counts (for prev/next-day-with-posts nav)
@@ -85,7 +85,7 @@ writeFileSync(
   JSON.stringify({
     minDay: days[0],
     maxDay: days[days.length - 1],
-    years: [...byYear.keys()].sort(),
+    years: [...new Set([...byMonth.keys()].map((m) => m.slice(0, 4)))].sort(),
     dayCounts,
     tweetCount: out.length,
   })
@@ -113,6 +113,6 @@ writeFileSync(
 );
 
 console.log(
-  `wrote ${out.length} tweets across ${byYear.size} year files, ` +
+  `wrote ${out.length} tweets across ${byMonth.size} month files, ` +
     `${days.length} distinct days (${days[0]} .. ${days[days.length - 1]})`
 );

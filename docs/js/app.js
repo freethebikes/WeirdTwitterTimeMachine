@@ -25,7 +25,7 @@
   let users = new Map(); // screen_name -> profile
   let days = []; // sorted days that have posts
   let currentDay = null;
-  const yearCache = new Map();
+  const monthCache = new Map();
 
   /* ---------- tiny utils ---------- */
 
@@ -82,12 +82,12 @@
       const rows = await sbFetch(`tweets?posted_day=eq.${day}&order=created_at.asc&select=*`);
       return rows.map(fromRow);
     }
-    const year = day.slice(0, 4);
-    if (!yearCache.has(year)) {
-      const res = await fetch(`data/tweets-${year}.json`);
-      yearCache.set(year, res.ok ? await res.json() : []);
+    const month = day.slice(0, 7);
+    if (!monthCache.has(month)) {
+      const res = await fetch(`data/tweets-${month}.json`);
+      monthCache.set(month, res.ok ? await res.json() : []);
     }
-    return yearCache.get(year).filter((t) => t.day === day);
+    return monthCache.get(month).filter((t) => t.day === day);
   }
 
   async function repliesFor(ids) {
@@ -160,9 +160,10 @@
 
   function renderSidebar(dayTweets) {
     const count = index.dayCounts[currentDay] || dayTweets.length;
+    const voices = new Set(dayTweets.map((t) => t.user)).size;
     $("#dayCount").textContent = count
-      ? `wint posted ${count} time${count === 1 ? "" : "s"} on this day.`
-      : "wint did not post on this day.";
+      ? `${count} post${count === 1 ? "" : "s"} by ${voices} account${voices === 1 ? "" : "s"} on this day.`
+      : "the timeline is quiet on this day.";
     $("#dataMode").textContent = useSupabase
       ? "posts + replies served from Supabase"
       : "static archive mode — replies are saved in this browser only";
@@ -176,8 +177,9 @@
     const year = currentDay.slice(0, 4);
     $("#pageFooter").innerHTML =
       `© ${esc(year)} Weird Twitter Time Machine · ` +
-      `posts by <a href="https://twitter.com/dril" target="_blank" rel="noopener">@dril</a> · ` +
-      `data from the <a href="https://github.com/codemasher/dril-archive" target="_blank" rel="noopener">dril-archive</a> · ` +
+      `posts by <a href="https://twitter.com/dril" target="_blank" rel="noopener">@dril</a> and the weird twitter greats · ` +
+      `data from the <a href="https://github.com/codemasher/dril-archive" target="_blank" rel="noopener">dril-archive</a> ` +
+      `and <a href="https://web.archive.org/web/2022/https://cooltweets.herokuapp.com/" target="_blank" rel="noopener">Cool Tweets</a> (via the Wayback Machine) · ` +
       `<a href="https://github.com/freethebikes/WeirdTwitterTimeMachine" target="_blank" rel="noopener">source</a>`;
   }
 
@@ -208,6 +210,7 @@
 
   function tweetHtml(t, replies) {
     const u = users.get(t.user) || { name: t.user, avatar: "" };
+    const avatar = u.avatar || "assets/egg.svg";
     const time = timeFmt.format(new Date(t.ts * 1000));
     const media = (t.media || [])
       .filter((m) => m.type === "photo")
@@ -219,7 +222,7 @@
     const futureReplies = (replies || []).map(replyHtml).join("");
     return `
       <article class="tweet" data-id="${esc(t.id)}">
-        <img class="avatar" src="${esc(u.avatar)}" alt="">
+        <img class="avatar" src="${esc(avatar)}" alt="">
         <div class="tweet-body">
           <div class="tweet-head">
             <span class="fullname">${esc(u.name)}</span>
@@ -229,10 +232,10 @@
           ${ctx}
           <p class="tweet-text">${linkify(t.text)}</p>
           ${media}
-          <div class="tweet-stats">
+          ${t.retweets || t.likes ? `<div class="tweet-stats">
             <span><b>${fmtNum(t.retweets)}</b> Retweets</span>
             <span><b>${fmtNum(t.likes)}</b> <span class="star">★</span> Favorites</span>
-          </div>
+          </div>` : ""}
           <div class="tweet-actions">
             <a href="#" class="act-reply">Reply</a>
             <a href="${esc(originalUrl(t))}" target="_blank" rel="noopener">View original ↗</a>

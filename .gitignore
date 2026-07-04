@@ -1,3 +1,7 @@
 node_modules/
 *.log
 .env
+
+# recovered Cool Tweets archives + cached Wayback HTML (regenerate with
+# scripts/scrape-cooltweets.mjs; the merged result lives in docs/data/)
+/data/

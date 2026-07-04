@@ -56,7 +56,7 @@ const users = JSON.parse(readFileSync(join(dataDir, "users.json"), "utf8")).map(
   statuses: u.statuses,
 }));
 
-const tweetFiles = readdirSync(dataDir).filter((f) => /^tweets-\d{4}\.json$/.test(f)).sort();
+const tweetFiles = readdirSync(dataDir).filter((f) => /^tweets-\d{4}(-\d{2})?\.json$/.test(f)).sort();
 const tweets = tweetFiles.flatMap((f) =>
   JSON.parse(readFileSync(join(dataDir, f), "utf8")).map((t) => ({
     id: t.id,

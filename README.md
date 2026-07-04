@@ -7,12 +7,23 @@ a message sent back in time.
 
 Live site: https://freethebikes.github.io/WeirdTwitterTimeMachine/
 
-## Data source
+## Data sources
 
-Posts are from [dril-archive](https://github.com/codemasher/dril-archive), a
-community-compiled archive of every @dril tweet (2008–2023) with full stats
-and original tweet links. `scripts/prepare-data.mjs` converts its `dril.json`
-export into the per-year files in `docs/data/`.
+- [dril-archive](https://github.com/codemasher/dril-archive), a
+  community-compiled archive of every @dril tweet (2008–2023) with full stats
+  and original tweet links. `scripts/prepare-data.mjs` converts its `dril.json`
+  export into the per-year files in `docs/data/`.
+- [Cool Tweets](https://web.archive.org/web/2022/https://cooltweets.herokuapp.com/)
+  (cooltweets.herokuapp.com, dead since mid-2023), which archived ~200 classic
+  weird twitter accounts. Recovered from the Wayback Machine by
+  `scripts/scrape-cooltweets.mjs` (every Cool Tweets page was static HTML with
+  the full archive inline). These posts have no engagement stats; the UI hides
+  the stats line for them. Post-Nov-2010 timestamps are exact (decoded from
+  snowflake IDs); older ones use the page's rendered US/Pacific time, verified
+  against dril-archive overlap. Only original posts are merged into the site —
+  @-replies and RTs (two-thirds of the ~5M recovered tweets) are left out,
+  both for size and because a timeline never showed strangers' replies. The
+  complete unfiltered data lives in `data/cooltweets/` (gitignored).
 
 ## Running modes
 
@@ -43,11 +54,14 @@ The site works two ways, controlled by `docs/js/config.js`:
 ## Regenerating data from a fresh archive export
 
 ```
-node scripts/prepare-data.mjs path/to/dril.json
+node scripts/prepare-data.mjs path/to/dril.json   # dril, from dril-archive
+node scripts/scrape-cooltweets.mjs                # recover Cool Tweets from Wayback
+node scripts/merge-cooltweets.mjs                 # fold them into docs/data/
 ```
 
-This rewrites `docs/data/tweets-*.json`, `docs/data/users.json`, and
-`docs/data/index.json`.
+`prepare-data.mjs` rewrites `docs/data/` with dril only, so always run
+`merge-cooltweets.mjs` after it. The scraper caches everything under `data/`
+(gitignored) and is safe to re-run; it only downloads what's missing.
 
 ## Local development
 
