@@ -201,6 +201,9 @@ a:hover { text-decoration: underline; }
 .tweet-head .username { color: #999; font-size: 12px; }
 .tweet-head .fullname, .tweet-head .username { cursor: pointer; }
 .tweet-head .fullname:hover, .tweet-head .username:hover { text-decoration: underline; color: #0084b4; }
+.tweet-head .act-block { visibility: hidden; font-size: 11px; font-weight: bold; color: #999; }
+.tweet-head:hover .act-block { visibility: visible; }
+.tweet-head .act-block:hover { color: #d40d12; text-decoration: none; }
 .tweet-head .timestamp { margin-left: auto; color: #999; font-size: 12px; white-space: nowrap; }
 .tweet-head .timestamp a { color: #999; }
 .reply-context { font-size: 12px; color: #999; margin: 1px 0; }
@@ -288,6 +291,33 @@ a:hover { text-decoration: underline; }
 .rc-send:disabled { opacity: 0.5; cursor: not-allowed; }
 .rc-note { font-size: 11px; color: #999; margin-top: 3px; }
 .rc-error { font-size: 11px; color: #d40d12; margin-top: 3px; }
+
+/* ---- blocked accounts page ---- */
+.blocked-row {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  padding: 9px 12px;
+  border-bottom: 1px solid #e8e8e8;
+}
+.blocked-row:last-child { border-bottom: none; }
+.blocked-row:hover { background: #f6f9fb; }
+.blocked-row .avatar { width: 48px; height: 48px; border-radius: 5px; flex-shrink: 0; }
+.blocked-who { display: flex; flex-direction: column; min-width: 0; }
+.blocked-who .fullname { font-weight: bold; color: #333; font-size: 14px; }
+.blocked-who .username { color: #999; font-size: 12px; }
+.bl-unblock {
+  margin-left: auto;
+  background: linear-gradient(#fff, #f0f0f0);
+  border: 1px solid #cbd6db;
+  border-radius: 4px;
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: bold;
+  color: #333;
+  cursor: pointer;
+}
+.bl-unblock:hover { background: #f0f8fc; border-color: #a8c7d8; }
 
 /* ---- empty / loading states ---- */
 .state-box { padding: 28px 20px; text-align: center; color: #666; font-size: 14px; }

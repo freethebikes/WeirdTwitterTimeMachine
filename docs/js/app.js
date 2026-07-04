@@ -18,6 +18,7 @@
   const LS_AUTHOR = "wttm-author";
   const LS_AUTOSCROLL = "wttm-autoscroll";
   const LS_LIKES = "wttm-likes-matches";
+  const LS_BLOCKED = "wttm-blocked";
 
   // Twitter switched tweet IDs from small sequential integers to Snowflake
   // IDs (which encode their creation time) on 2010-11-04. Snowflake IDs
@@ -39,6 +40,8 @@
   let currentView = "day"; // "day" | "likes" | "search"
   let lastTweets = []; // tweets currently on screen (for the time-of-day jump)
   let userFilter = null; // screen_name to isolate, or null for everyone
+  let blockedUsers = loadBlocked(); // screen names you've blocked, in the order you blocked them
+  let blockedLower = new Set(blockedUsers.map((n) => n.toLowerCase()));
   let searchSeq = 0; // bumps on every view change; cancels in-flight search scans
   const monthCache = new Map();
   let legacyIds = null; // data/legacy-ids.json, loaded lazily
@@ -287,6 +290,7 @@
   async function renderLikes() {
     searchSeq++;
     currentView = "likes";
+    setActiveNav();
     document.title = "Your Recovered Likes — Weird Twitter Time Machine";
     timeline.innerHTML = `<div class="state-box">looking through your likes…</div>`;
     document.querySelectorAll("#yearList a").forEach((a) => a.classList.remove("active"));
@@ -326,6 +330,69 @@
     applyUserFilter();
   }
 
+  /* ---------- block list ---------- */
+
+  function loadBlocked() {
+    try {
+      const list = JSON.parse(localStorage.getItem(LS_BLOCKED) || "[]");
+      return Array.isArray(list) ? list.filter((n) => typeof n === "string") : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveBlocked() {
+    localStorage.setItem(LS_BLOCKED, JSON.stringify(blockedUsers));
+    blockedLower = new Set(blockedUsers.map((n) => n.toLowerCase()));
+  }
+
+  function blockUser(screenName) {
+    if (!blockedLower.has(screenName.toLowerCase())) {
+      blockedUsers.push(screenName);
+      saveBlocked();
+    }
+    if (userFilter && userFilter.toLowerCase() === screenName.toLowerCase()) userFilter = null;
+    applyUserFilter();
+  }
+
+  function unblockUser(screenName) {
+    blockedUsers = blockedUsers.filter((n) => n.toLowerCase() !== screenName.toLowerCase());
+    saveBlocked();
+  }
+
+  function renderBlocked() {
+    searchSeq++;
+    currentView = "blocked";
+    setActiveNav();
+    document.title = "Blocked Accounts — Weird Twitter Time Machine";
+    document.querySelectorAll("#yearList a").forEach((a) => a.classList.remove("active"));
+    $("#dayCount").textContent = blockedUsers.length
+      ? `${blockedUsers.length} account${blockedUsers.length === 1 ? "" : "s"} blocked.`
+      : "";
+
+    const back = `<div class="state-box likes-back"><a href="#/${esc(currentDay || goldenRandomDay())}">← back to the time machine</a></div>`;
+    if (!blockedUsers.length) {
+      timeline.innerHTML = back + `<div class="state-box">You haven't blocked anyone. Hover over a name in the timeline and click Block to hide an account's posts.</div>`;
+      return;
+    }
+    timeline.innerHTML =
+      back +
+      blockedUsers
+        .map((name) => {
+          const u = users.get(name) || { name, avatar: "" };
+          return `
+            <div class="blocked-row" data-user="${esc(name)}">
+              <img class="avatar" src="${esc(u.avatar || "assets/egg.svg")}" alt="">
+              <div class="blocked-who">
+                <span class="fullname">${esc(u.name)}</span>
+                <span class="username">@${esc(name)}</span>
+              </div>
+              <button type="button" class="bl-unblock">Unblock</button>
+            </div>`;
+        })
+        .join("");
+  }
+
   /* ---------- search ---------- */
 
   const SEARCH_CAP = 200;
@@ -345,6 +412,7 @@
   async function renderSearch(q) {
     const seq = ++searchSeq;
     currentView = "search";
+    setActiveNav();
     document.title = `${q} — Search — Weird Twitter Time Machine`;
     $("#topSearch").value = q;
     document.querySelectorAll("#yearList a").forEach((a) => a.classList.remove("active"));
@@ -428,6 +496,11 @@
 
   /* ---------- navigation ---------- */
 
+  function setActiveNav() {
+    $("#navHome").classList.toggle("active", currentView !== "blocked");
+    $("#navBlocked").classList.toggle("active", currentView === "blocked");
+  }
+
   function dayFromHash() {
     const m = location.hash.match(/^#\/(\d{4}-\d{2}-\d{2})$/);
     return m ? m[1] : null;
@@ -482,12 +555,15 @@
     if (el) el.scrollIntoView({ block: "start", behavior: "smooth" });
   }
 
-  // hide every tweet that isn't by userFilter; label the stream header
+  // hide blocked accounts, plus every tweet that isn't by userFilter
+  // when one is set; label the stream header
   function applyUserFilter() {
     const tweetsEls = timeline.querySelectorAll(".tweet");
     let visible = 0;
     tweetsEls.forEach((el) => {
-      const hide = Boolean(userFilter) && el.dataset.user !== userFilter;
+      const hide =
+        blockedLower.has(el.dataset.user.toLowerCase()) ||
+        (Boolean(userFilter) && el.dataset.user !== userFilter);
       el.classList.toggle("filtered-out", hide);
       if (!hide) visible++;
     });
@@ -497,13 +573,18 @@
       : "";
 
     let note = timeline.querySelector(".filter-empty");
-    if (userFilter && !visible && tweetsEls.length) {
+    const noteHtml = !visible && tweetsEls.length
+      ? userFilter
+        ? `@${esc(userFilter)} has no posts here.`
+        : `Everything here is from <a href="#/blocked">accounts you've blocked</a>.`
+      : "";
+    if (noteHtml) {
       if (!note) {
         note = document.createElement("div");
         note.className = "state-box filter-empty";
         timeline.prepend(note);
       }
-      note.textContent = `@${userFilter} has no posts here.`;
+      note.innerHTML = noteHtml;
     } else if (note) {
       note.remove();
     }
@@ -571,6 +652,7 @@
           <div class="tweet-head">
             <span class="fullname" title="Show only @${esc(t.user)}">${esc(u.name)}</span>
             <span class="username" title="Show only @${esc(t.user)}">@${esc(t.user)}</span>
+            <a href="#" class="act-block" title="Hide all posts from @${esc(t.user)}">Block</a>
             <span class="timestamp"><a href="${esc(originalUrl(t))}" target="_blank" rel="noopener" title="${esc(longFmt.format(dayDate(t.day)))} — view original on Twitter">${time}</a></span>
           </div>
           ${ctx}
@@ -654,6 +736,7 @@
   async function render() {
     searchSeq++;
     currentView = "day";
+    setActiveNav();
     const day = currentDay;
     document.title = `${longFmt.format(dayDate(day))} — Weird Twitter Time Machine`;
     timeline.innerHTML = `<div class="state-box">loading the past…</div>`;
@@ -723,14 +806,16 @@
       if (dayPicker.value) setDay(dayPicker.value);
     });
     window.addEventListener("hashchange", () => {
+      if (location.hash === "#/blocked") { renderBlocked(); return; }
       if (location.hash === "#/likes") { renderLikes(); return; }
       const q = searchFromHash();
       if (q !== null) { renderSearch(q); return; }
       const d = dayFromHash();
       if (d && (d !== currentDay || currentView !== "day")) setDay(d, false);
+      else if (!d && currentView !== "day") setDay(currentDay || goldenRandomDay());
     });
 
-    // reply + name-click handling is delegated so it also covers
+    // reply + block + name-click handling is delegated so it also covers
     // search results, which stream into the timeline in batches
     timeline.addEventListener("click", (e) => {
       const reply = e.target.closest(".act-reply");
@@ -739,8 +824,20 @@
         attachComposer(reply.closest(".tweet"));
         return;
       }
+      const block = e.target.closest(".act-block");
+      if (block) {
+        e.preventDefault();
+        blockUser(block.closest(".tweet").dataset.user);
+        return;
+      }
+      const unblock = e.target.closest(".bl-unblock");
+      if (unblock) {
+        unblockUser(unblock.closest(".blocked-row").dataset.user);
+        renderBlocked();
+        return;
+      }
       const name = e.target.closest(".fullname, .username");
-      if (name) toggleUserFilter(name.closest(".tweet").dataset.user);
+      if (name && name.closest(".tweet")) toggleUserFilter(name.closest(".tweet").dataset.user);
     });
     $("#streamFilter").addEventListener("click", (e) => {
       if (e.target.closest("#clearFilter")) {
@@ -810,7 +907,9 @@
     });
 
     const bootSearch = searchFromHash();
-    if (location.hash === "#/likes") {
+    if (location.hash === "#/blocked") {
+      renderBlocked();
+    } else if (location.hash === "#/likes") {
       renderLikes();
     } else if (bootSearch !== null) {
       renderSearch(bootSearch);
