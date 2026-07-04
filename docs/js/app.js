@@ -19,6 +19,7 @@
   const LS_AUTOSCROLL = "wttm-autoscroll";
   const LS_LIKES = "wttm-likes-matches";
   const LS_BLOCKED = "wttm-blocked";
+  const LS_PHONE = "wttm-phone-mode";
 
   // Twitter switched tweet IDs from small sequential integers to Snowflake
   // IDs (which encode their creation time) on 2010-11-04. Snowflake IDs
@@ -318,6 +319,7 @@
 
     tweets.sort((a, b) => b.ts - a.ts);
     lastTweets = tweets;
+    updatePhoneFrame();
     let replies = {};
     try {
       replies = await repliesFor(tweets.map((t) => t.id));
@@ -457,6 +459,7 @@
         statusEl.textContent = `search failed (${err.message})`;
       }
       lastTweets = matches;
+      updatePhoneFrame();
       return;
     }
 
@@ -492,6 +495,7 @@
           ? `${matches.length} matches · stopped at ${lastMonth}`
           : `${matches.length} matches across the whole archive`;
     lastTweets = matches;
+    updatePhoneFrame();
   }
 
   /* ---------- navigation ---------- */
@@ -595,6 +599,54 @@
     applyUserFilter();
   }
 
+  /* ---------- phone mode ---------- */
+
+  // year -> [model name, chassis generation]; the frame CSS keys off ph-<gen>
+  const PHONE_MODELS = [
+    [2007, "iPhone", "2007"],
+    [2008, "iPhone 3G", "3g"],
+    [2009, "iPhone 3GS", "3g"],
+    [2010, "iPhone 4", "4"],
+    [2011, "iPhone 4S", "4"],
+    [2012, "iPhone 5", "5"],
+    [2013, "iPhone 5s", "5s"],
+    [2014, "iPhone 6", "6"],
+    [2015, "iPhone 6s", "6s"],
+    [2016, "iPhone 7", "7"],
+    [2017, "iPhone X", "x"],
+    [2018, "iPhone XS", "x"],
+    [2019, "iPhone 11", "x"],
+    [2020, "iPhone 12", "12"],
+    [2021, "iPhone 13", "12"],
+    [2022, "iPhone 14 Pro", "14"],
+    [2023, "iPhone 15 Pro", "14"],
+  ];
+
+  function phoneModelForYear(year) {
+    return PHONE_MODELS.find(([y]) => year <= y) || PHONE_MODELS[PHONE_MODELS.length - 1];
+  }
+
+  // iOS 7 (2013) flattened the status bar
+  const IOS_CLASSIC_GENS = new Set(["2007", "3g", "4", "5"]);
+
+  function updatePhoneFrame() {
+    const on = $("#phoneMode").checked;
+    document.body.classList.toggle("phone-mode", on);
+    const frame = $("#phoneFrame");
+    if (!on) {
+      frame.className = "phone-frame"; // drop the ph-* chassis so the chrome hides
+      return;
+    }
+    const day =
+      (currentView === "day" ? currentDay : lastTweets[0] && lastTweets[0].day) ||
+      currentDay ||
+      "2012-06-15";
+    const year = Number(day.slice(0, 4));
+    const [, name, gen] = phoneModelForYear(year);
+    frame.className = `phone-frame ph-${gen} ${IOS_CLASSIC_GENS.has(gen) ? "ios-classic" : "ios-flat"}`;
+    $("#phoneCaption").textContent = `${name} · ${year}`;
+  }
+
   function renderSidebar(dayTweets) {
     const count = index.dayCounts[currentDay] || dayTweets.length;
     const voices = new Set(dayTweets.map((t) => t.user)).size;
@@ -617,8 +669,6 @@
       .join("");
 
     $("#pageFooter").innerHTML =
-      `© ${esc(year)} Weird Twitter Time Machine · ` +
-      `posts by <a href="https://twitter.com/dril" target="_blank" rel="noopener">@dril</a> and the weird twitter greats · ` +
       `data from the <a href="https://github.com/codemasher/dril-archive" target="_blank" rel="noopener">dril-archive</a> ` +
       `and <a href="https://web.archive.org/web/2022/https://cooltweets.herokuapp.com/" target="_blank" rel="noopener">Cool Tweets</a> (via the Wayback Machine) · ` +
       `<a href="https://github.com/freethebikes/WeirdTwitterTimeMachine" target="_blank" rel="noopener">source</a>`;
@@ -751,6 +801,7 @@
 
     renderSidebar(tweets);
     lastTweets = tweets;
+    updatePhoneFrame();
 
     if (!tweets.length) {
       const prev = neighborDay(currentDay, -1);
@@ -793,11 +844,19 @@
     renderYears();
 
     const autoScroll = $("#autoScroll");
-    autoScroll.checked = localStorage.getItem(LS_AUTOSCROLL) === "1";
+    autoScroll.checked = localStorage.getItem(LS_AUTOSCROLL) !== "0"; // on by default
     autoScroll.addEventListener("change", () => {
       localStorage.setItem(LS_AUTOSCROLL, autoScroll.checked ? "1" : "0");
       if (autoScroll.checked) scrollToNow();
     });
+
+    const phoneMode = $("#phoneMode");
+    phoneMode.checked = localStorage.getItem(LS_PHONE) === "1";
+    phoneMode.addEventListener("change", () => {
+      localStorage.setItem(LS_PHONE, phoneMode.checked ? "1" : "0");
+      updatePhoneFrame();
+    });
+    updatePhoneFrame();
 
     $("#prevDay").addEventListener("click", () => setDay(neighborDay(currentDay, -1)));
     $("#nextDay").addEventListener("click", () => setDay(neighborDay(currentDay, +1)));

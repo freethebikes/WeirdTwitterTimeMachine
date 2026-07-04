@@ -319,6 +319,302 @@ a:hover { text-decoration: underline; }
 }
 .bl-unblock:hover { background: #f0f8fc; border-color: #a8c7d8; }
 
+/* ---- Phone Mode ----
+   The stream sits inside .phone-frame > .phone-screen, which are inert
+   plain divs until body.phone-mode is set. Each generation gets a ph-*
+   class on the frame; --bezel/--side drive the chassis geometry. */
+
+.phonemode .pm-toggle {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  color: #666;
+  cursor: pointer;
+  user-select: none;
+}
+
+.phone-earpiece, .phone-notch, .phone-statusbar,
+.phone-home, .phone-homebar, .phone-caption { display: none; }
+
+body.phone-mode .stream {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+body.phone-mode .phone-frame {
+  --bezel: 64px;
+  --side: 14px;
+  --screen-w: 320px;
+  --screen-h: 480px;
+  position: relative;
+  padding: var(--bezel) var(--side);
+  border-radius: 42px;
+  background: linear-gradient(#141618, #060708);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.25), 0 16px 36px rgba(0, 0, 0, 0.35);
+}
+body.phone-mode .phone-screen {
+  position: relative;
+  width: var(--screen-w);
+  max-width: calc(100vw - 64px);
+  height: min(var(--screen-h), max(380px, calc(100vh - 240px)));
+  overflow-y: auto;
+  scrollbar-width: none;
+  background: #c0deed;
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px #000;
+}
+body.phone-mode .phone-screen::-webkit-scrollbar { display: none; }
+body.phone-mode .stream-header,
+body.phone-mode .timeline { border-left: none; border-right: none; border-radius: 0; }
+body.phone-mode .tweet { scroll-margin-top: 26px; }
+body.phone-mode .phone-caption {
+  display: block;
+  margin-top: 10px;
+  font-size: 12px;
+  color: #666;
+  text-align: center;
+}
+
+/* chassis furniture */
+body.phone-mode .phone-earpiece {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: var(--bezel);
+}
+.ph-speaker {
+  width: 54px; height: 7px;
+  border-radius: 4px;
+  background: #17191c;
+  box-shadow: inset 0 1px 2px #000, 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+.ph-camera {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: #101318;
+  box-shadow: inset 0 0 2px 1px #010309, 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+.ph-2007 .ph-camera, .ph-3g .ph-camera { display: none; } /* no front camera yet */
+
+body.phone-mode .phone-home {
+  display: block;
+  position: absolute;
+  left: 50%;
+  bottom: calc((var(--bezel) - 46px) / 2);
+  transform: translateX(-50%);
+  width: 46px; height: 46px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #2b2f34, #0a0c0e 70%);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.9), 0 1px 1px rgba(255, 255, 255, 0.12);
+}
+body.phone-mode .phone-home::after { /* the rounded-square app glyph */
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 15px; height: 15px;
+  border: 1.5px solid rgba(255, 255, 255, 0.35);
+  border-radius: 4px;
+}
+
+/* status bar (lives inside the screen, stays put while tweets scroll) */
+body.phone-mode .phone-statusbar {
+  display: flex;
+  align-items: center;
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  height: 20px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: bold;
+}
+.ph-cell, .ph-right { flex: 1; display: flex; align-items: center; gap: 4px; }
+.ph-right { justify-content: flex-end; }
+.ph-signal { font-style: normal; }
+.ph-batt {
+  display: inline-block;
+  position: relative;
+  width: 20px; height: 9px;
+  padding: 1px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+}
+.ph-batt::before {
+  content: "";
+  display: block;
+  height: 100%;
+  width: 80%;
+  border-radius: 1px;
+  background: currentColor;
+}
+.ph-batt::after { /* the little terminal nub */
+  content: "";
+  position: absolute;
+  right: -3px; top: 2px;
+  width: 2px; height: 3px;
+  background: currentColor;
+  border-radius: 0 1px 1px 0;
+}
+
+/* skeuomorphic status bar, iOS 1-6 (through 2012) */
+body.phone-mode .ios-classic .phone-statusbar {
+  background: linear-gradient(#697380, #3a424c 49%, #262c34 50%, #333b44);
+  color: #fff;
+  text-shadow: 0 -1px 0 rgba(0, 0, 0, 0.5);
+}
+body.phone-mode .ios-classic .ph-signal::before { content: "▁▃▄▆█"; font-size: 8px; letter-spacing: 0.5px; }
+body.phone-mode .ios-classic .ph-batt::before { background: linear-gradient(#d4f0a2, #74c044 45%, #4e9a2e); }
+
+/* flat status bar, iOS 7+ (2013 on) */
+body.phone-mode .ios-flat .phone-statusbar {
+  background: rgba(255, 255, 255, 0.95);
+  color: #000;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.05);
+}
+body.phone-mode .ios-flat .ph-signal::before { content: "●●●●○"; font-size: 7px; letter-spacing: 1px; }
+
+/* ---- the generations ----
+   Every selector carries body.phone-mode so it outranks the base
+   .phone-frame / .phone-screen / chrome rules above. */
+
+/* 2007 — the original: aluminum back peeking around a black face */
+body.phone-mode .ph-2007 {
+  --bezel: 66px;
+  border: 4px solid #c6cacf;
+  border-radius: 38px;
+  background: linear-gradient(#17191b, #070808);
+}
+
+/* 2008-09 — 3G / 3GS: glossy black plastic, chrome bezel ring */
+body.phone-mode .ph-3g {
+  --bezel: 70px;
+  border: 3px solid #dfe2e6;
+  border-radius: 44px;
+  background: linear-gradient(155deg, #2a2c30, #050607 60%);
+}
+
+/* 2010-11 — 4 / 4S: flat glass, steel antenna band, squarer corners */
+body.phone-mode .ph-4 {
+  --bezel: 60px;
+  border: 4px solid #92979d;
+  border-radius: 28px;
+  background: linear-gradient(#121417, #060708);
+}
+
+/* 2012 — 5: taller 4-inch screen, black & slate */
+body.phone-mode .ph-5, body.phone-mode .ph-5s { --bezel: 56px; --side: 11px; --screen-h: 568px; border-radius: 34px; }
+body.phone-mode .ph-5 { background: linear-gradient(#2e3238, #111318); }
+
+/* 2013 — 5s: silver & white, gold Touch ID ring */
+body.phone-mode .ph-5s {
+  background: linear-gradient(#fbfbfb, #e6e7e9);
+  box-shadow: inset 0 0 0 1px #c7c9cc, 0 16px 36px rgba(0, 0, 0, 0.25);
+}
+body.phone-mode .ph-5s .ph-speaker { background: #d0d2d5; box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35); }
+body.phone-mode .ph-5s .ph-camera { background: #3a3f46; box-shadow: none; }
+body.phone-mode .ph-5s .phone-home {
+  background: #f4f4f6;
+  box-shadow: inset 0 0 0 2.5px #d9bd7f, inset 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+/* 2014-16 — 6 / 6s / 7: bigger, rounder */
+body.phone-mode .ph-6, body.phone-mode .ph-6s, body.phone-mode .ph-7 {
+  --bezel: 58px;
+  --screen-w: 375px;
+  --screen-h: 667px;
+  border-radius: 48px;
+}
+body.phone-mode .ph-6 { background: linear-gradient(#41454b, #1d1f23); }
+body.phone-mode .ph-6s { background: linear-gradient(#f7dcd2, #e3ac9d); } /* rose gold */
+body.phone-mode .ph-6s .ph-speaker { background: #d8b3a7; box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35); }
+body.phone-mode .ph-6s .ph-camera { background: #4a3f3c; box-shadow: none; }
+body.phone-mode .ph-6s .phone-home {
+  background: #f9ece6;
+  box-shadow: inset 0 0 0 2.5px #d99f8d, inset 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+body.phone-mode .ph-7 { background: linear-gradient(150deg, #33363b, #0a0b0d 65%); } /* jet black */
+body.phone-mode .ph-6 .phone-home, body.phone-mode .ph-7 .phone-home {
+  background: radial-gradient(circle at 35% 30%, #222529, #0b0d0f 70%);
+  box-shadow: inset 0 0 0 2.5px #565b62, inset 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+/* Touch ID: no glyph */
+body.phone-mode .ph-5s .phone-home::after, body.phone-mode .ph-6 .phone-home::after,
+body.phone-mode .ph-6s .phone-home::after, body.phone-mode .ph-7 .phone-home::after { content: none; }
+
+/* 2017-21 — X through 13: all screen, notch, no home button */
+body.phone-mode .ph-x, body.phone-mode .ph-12, body.phone-mode .ph-14 {
+  --bezel: 13px;
+  --side: 13px;
+  --screen-w: 375px;
+  --screen-h: 740px;
+  border-radius: 46px;
+  background: linear-gradient(#26282c, #0a0b0d);
+}
+body.phone-mode .ph-12, body.phone-mode .ph-14 { border-radius: 40px; } /* the flat-sided era */
+body.phone-mode .ph-x .phone-screen, body.phone-mode .ph-12 .phone-screen,
+body.phone-mode .ph-14 .phone-screen { border-radius: 32px; }
+body.phone-mode .ph-x .phone-earpiece, body.phone-mode .ph-12 .phone-earpiece,
+body.phone-mode .ph-14 .phone-earpiece, body.phone-mode .ph-x .phone-home,
+body.phone-mode .ph-12 .phone-home, body.phone-mode .ph-14 .phone-home { display: none; }
+body.phone-mode .ph-x .phone-notch, body.phone-mode .ph-12 .phone-notch {
+  display: block;
+  position: absolute;
+  top: var(--bezel);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 150px; height: 24px;
+  background: #000;
+  border-radius: 0 0 16px 16px;
+  z-index: 7;
+}
+body.phone-mode .ph-x .phone-homebar, body.phone-mode .ph-12 .phone-homebar,
+body.phone-mode .ph-14 .phone-homebar {
+  display: block;
+  position: absolute;
+  bottom: calc(var(--bezel) + 7px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 110px; height: 4px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 7;
+  pointer-events: none;
+}
+
+/* 2022+ — Dynamic Island */
+body.phone-mode .ph-14 .phone-notch {
+  display: block;
+  position: absolute;
+  top: calc(var(--bezel) + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 92px; height: 23px;
+  background: #000;
+  border-radius: 12px;
+  z-index: 7;
+}
+
+/* notch-era status bar: clock left, radios right, room for the notch */
+body.phone-mode .ph-x .phone-statusbar, body.phone-mode .ph-12 .phone-statusbar,
+body.phone-mode .ph-14 .phone-statusbar {
+  height: 34px;
+  padding: 0 20px;
+}
+body.phone-mode .ph-x .ph-clock, body.phone-mode .ph-12 .ph-clock,
+body.phone-mode .ph-14 .ph-clock { order: 0; flex: 1; }
+body.phone-mode .ph-x .ph-cell, body.phone-mode .ph-12 .ph-cell,
+body.phone-mode .ph-14 .ph-cell { order: 1; flex: 0 0 auto; }
+body.phone-mode .ph-x .ph-right, body.phone-mode .ph-12 .ph-right,
+body.phone-mode .ph-14 .ph-right { order: 2; flex: 0 0 auto; }
+body.phone-mode .ph-x .ph-carrier, body.phone-mode .ph-12 .ph-carrier,
+body.phone-mode .ph-14 .ph-carrier, body.phone-mode .ph-x .ph-ampm,
+body.phone-mode .ph-12 .ph-ampm, body.phone-mode .ph-14 .ph-ampm { display: none; }
+
 /* ---- empty / loading states ---- */
 .state-box { padding: 28px 20px; text-align: center; color: #666; font-size: 14px; }
 .state-box.search-status { padding: 12px; font-size: 12px; color: #999; border-bottom: 1px solid #e8e8e8; }
