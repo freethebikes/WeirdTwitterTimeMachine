@@ -341,6 +341,24 @@ a:hover { text-decoration: underline; }
   cursor: pointer;
   user-select: none;
 }
+.phonemode .pm-sub { margin-top: 6px; padding-left: 18px; }
+
+/* bathroom at work: the stall floor appears behind the phone */
+body.phone-mode.bathroom-mode .stream {
+  background-size: cover;
+  background-position: center;
+  border-radius: 8px;
+  padding: 30px 0 24px;
+  box-shadow: inset 0 0 60px rgba(0, 0, 0, 0.25);
+}
+body.bathroom-1 .stream { background-image: url("../assets/floor1.jpg"); }
+body.bathroom-2 .stream { background-image: url("../assets/floor2.jpg"); }
+body.phone-mode.bathroom-mode .phone-caption {
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: 10px;
+  padding: 2px 10px;
+  color: #444;
+}
 
 .phone-earpiece, .phone-notch, .phone-statusbar,
 .phone-home, .phone-homebar, .phone-caption { display: none; }

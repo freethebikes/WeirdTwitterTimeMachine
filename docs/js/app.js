@@ -20,6 +20,7 @@
   const LS_LIKES = "wttm-likes-matches";
   const LS_BLOCKED = "wttm-blocked";
   const LS_PHONE = "wttm-phone-mode";
+  const LS_BATHROOM = "wttm-bathroom-mode";
 
   // Twitter switched tweet IDs from small sequential integers to Snowflake
   // IDs (which encode their creation time) on 2010-11-04. Snowflake IDs
@@ -869,6 +870,32 @@
     });
     updatePhoneFrame();
     setInterval(updatePhoneClock, 30000);
+
+    const bathroomMode = $("#bathroomMode");
+    function updateBathroom() {
+      const on = bathroomMode.checked;
+      document.body.classList.toggle("bathroom-mode", on);
+      if (on) {
+        // pick one of the two stalls per visit, not per render
+        if (!document.body.classList.contains("bathroom-1") && !document.body.classList.contains("bathroom-2")) {
+          document.body.classList.add(Math.random() < 0.5 ? "bathroom-1" : "bathroom-2");
+        }
+      } else {
+        document.body.classList.remove("bathroom-1", "bathroom-2");
+      }
+    }
+    bathroomMode.checked = localStorage.getItem(LS_BATHROOM) === "1";
+    bathroomMode.addEventListener("change", () => {
+      localStorage.setItem(LS_BATHROOM, bathroomMode.checked ? "1" : "0");
+      if (bathroomMode.checked && !phoneMode.checked) {
+        // you read these on a phone in the stall; turn the phone on too
+        phoneMode.checked = true;
+        localStorage.setItem(LS_PHONE, "1");
+        updatePhoneFrame();
+      }
+      updateBathroom();
+    });
+    updateBathroom();
 
     $("#prevDay").addEventListener("click", () => setDay(neighborDay(currentDay, -1)));
     $("#nextDay").addEventListener("click", () => setDay(neighborDay(currentDay, +1)));
