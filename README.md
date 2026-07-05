@@ -1,18 +1,21 @@
 # Weird Twitter Time Machine
 
-Pick a day from the archive and see the timeline exactly as it looked, styled
-like Twitter circa 2012–2014. Every post links back to the original tweet.
-Reply to any post — your reply is stamped with today's date, so it reads as
-a message sent back in time.
+A time capsule of a strange, golden stretch of the internet — roughly
+2012–2014 — when a loose crowd of writers, comedians, and merry pranksters all
+happened to land on the same underpowered website at the same time and started
+making jokes at each other. It didn't last, and most of it is gone now. This
+recreates it: pick a day from the archive and see the timeline exactly as it
+looked, styled like Twitter of that era. Every post links back to the original
+tweet. Reply to any post — your reply is stamped with today's date, so it reads
+as a message sent back in time.
 
 Live site: https://freethebikes.github.io/WeirdTwitterTimeMachine/
 
 ## Data sources
 
-- [dril-archive](https://github.com/codemasher/dril-archive), a
-  community-compiled archive of every @dril tweet (2008–2023) with full stats
-  and original tweet links. `scripts/prepare-data.mjs` converts its `dril.json`
-  export into the per-year files in `docs/data/`.
+The archive is a recovered cross-section of that scene — the writers,
+comedians, and shitposters who defined it — reassembled from two sources:
+
 - [Cool Tweets](https://web.archive.org/web/2022/https://cooltweets.herokuapp.com/)
   (cooltweets.herokuapp.com, dead since mid-2023), which archived ~200 classic
   weird twitter accounts. Recovered from the Wayback Machine by
@@ -26,6 +29,12 @@ Live site: https://freethebikes.github.io/WeirdTwitterTimeMachine/
   complete unfiltered data (locally in gitignored `data/cooltweets/`) is
   published at
   [freethebikes/cooltweets-archive](https://github.com/freethebikes/cooltweets-archive).
+- [dril-archive](https://github.com/codemasher/dril-archive), a
+  community-compiled archive of every @dril tweet (2008–2023) with full stats
+  and original tweet links — one account's complete run, folded in among the
+  rest. `scripts/prepare-data.mjs` converts its `dril.json` export into the
+  per-year files in `docs/data/`, then `merge-cooltweets.mjs` layers the Cool
+  Tweets scene on top.
 
 ## Find Your Likes
 
