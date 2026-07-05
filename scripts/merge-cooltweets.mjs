@@ -56,13 +56,15 @@ for (const f of ctFiles) {
       ts: t.ts,
       day: t.day,
       text: t.text,
-      retweets: 0,
-      likes: 0,
+      // Cool Tweets pages had no engagement stats or media, but other
+      // recovered sources (saved profile pages) do — pass them through
+      retweets: t.retweets || 0,
+      likes: t.likes || 0,
       replies: 0,
       quotes: 0,
       reply_to_id: null,
       reply_to_user: null,
-      media: [],
+      media: t.media || [],
     });
   }
 }
