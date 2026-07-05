@@ -629,6 +629,16 @@
   // iOS 7 (2013) flattened the status bar
   const IOS_CLASSIC_GENS = new Set(["2007", "3g", "4", "5"]);
 
+  // the status bar shows the visitor's own wall clock, not the tweets' era
+  function updatePhoneClock() {
+    const [time, ampm] = new Date()
+      .toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
+      .split(" ");
+    const clock = document.querySelector(".ph-clock");
+    clock.firstChild.nodeValue = time;
+    clock.querySelector(".ph-ampm").textContent = ` ${ampm}`;
+  }
+
   function updatePhoneFrame() {
     const on = $("#phoneMode").checked;
     document.body.classList.toggle("phone-mode", on);
@@ -645,6 +655,7 @@
     const [, name, gen] = phoneModelForYear(year);
     frame.className = `phone-frame ph-${gen} ${IOS_CLASSIC_GENS.has(gen) ? "ios-classic" : "ios-flat"}`;
     $("#phoneCaption").textContent = `${name} · ${year}`;
+    updatePhoneClock();
   }
 
   function renderSidebar(dayTweets) {
@@ -857,6 +868,7 @@
       updatePhoneFrame();
     });
     updatePhoneFrame();
+    setInterval(updatePhoneClock, 30000);
 
     $("#prevDay").addEventListener("click", () => setDay(neighborDay(currentDay, -1)));
     $("#nextDay").addEventListener("click", () => setDay(neighborDay(currentDay, +1)));

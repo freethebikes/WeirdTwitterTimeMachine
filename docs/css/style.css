@@ -42,7 +42,15 @@ a:hover { text-decoration: underline; }
 .topnav a:hover, .topnav a.active { color: #333; text-decoration: none; }
 .topnav a.active { border-bottom: 3px solid #55acee; }
 .nav-ico { font-size: 14px; }
-.bird { display: flex; align-items: center; padding: 0 14px; }
+.bird { display: flex; align-items: center; padding: 0 14px; position: relative; z-index: 20; }
+.bird img {
+  height: 26px;
+  width: auto;
+  display: block;
+  transition: transform 0.18s ease;
+  transform-origin: 50% 0; /* grow downward out of the bar */
+}
+.bird:hover img { transform: scale(5.5); filter: drop-shadow(0 3px 2px rgba(0, 0, 0, 0.18)); }
 .topsearch { flex: 1; display: flex; justify-content: flex-end; }
 .topsearch input {
   width: 220px;
