@@ -343,16 +343,26 @@ a:hover { text-decoration: underline; }
 }
 .phonemode .pm-sub { margin-top: 6px; padding-left: 18px; }
 
-/* bathroom at work: the stall floor appears behind the phone */
-body.phone-mode.bathroom-mode .stream {
+/* bathroom at work: the whole page becomes the stall floor, phone held
+   over the tile (the floor stays put while the timeline scrolls) */
+body.bathroom-mode {
   background-size: cover;
   background-position: center;
-  border-radius: 8px;
-  padding: 30px 0 24px;
-  box-shadow: inset 0 0 60px rgba(0, 0, 0, 0.25);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
 }
-body.bathroom-1 .stream { background-image: url("../assets/floor1.jpg"); }
-body.bathroom-2 .stream { background-image: url("../assets/floor2.jpg"); }
+body.bathroom-1 { background-image: url("../assets/floor1.jpg"); }
+body.bathroom-2 { background-image: url("../assets/floor2.jpg"); }
+body.phone-mode.bathroom-mode .stream { padding: 30px 0 24px; }
+/* dim stall lighting at the viewport edges (under the topbar) */
+body.bathroom-mode::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 120px rgba(0, 0, 0, 0.35);
+  z-index: 5;
+}
 body.phone-mode.bathroom-mode .phone-caption {
   background: rgba(255, 255, 255, 0.85);
   border-radius: 10px;
