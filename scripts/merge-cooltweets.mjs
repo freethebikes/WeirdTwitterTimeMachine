@@ -23,6 +23,20 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const dataDir = join(root, "docs", "data");
 const ctDir = join(root, "data", "cooltweets");
 
+// Mainstream accounts scraped purely for time context (the news of the day,
+// via scrape-wayback-twitter.mjs --daily --profiles-only). They're flagged
+// `context: true` in users.json so the site can set them apart and filter
+// them, and their posts stay out of index.json dayCounts so day navigation
+// and the random-day picker remain about the weird accounts. The registry
+// lives here (not in users.json) so the flag survives pipeline rebuilds.
+const CONTEXT_ACCOUNTS = {
+  cnnbrk: { name: "CNN Breaking News", description: "Breaking news from CNN Digital. Now 24/7." },
+  nytimes: { name: "The New York Times", description: "Where the conversation begins. Follow for breaking news, special reports, world news, business, science and more." },
+  AP: { name: "The Associated Press", description: "News from The Associated Press, and a taste of the great journalism produced by AP members and customers." },
+  BBCBreaking: { name: "BBC Breaking News", description: "Breaking news alerts and updates from the BBC." },
+};
+const contextLower = new Map(Object.entries(CONTEXT_ACCOUNTS).map(([k, v]) => [k.toLowerCase(), v]));
+
 const byId = new Map();
 for (const f of readdirSync(dataDir).filter((f) => /^tweets-\d{4}(-\d{2})?\.json$/.test(f))) {
   for (const t of JSON.parse(readFileSync(join(dataDir, f), "utf8"))) byId.set(t.id, t);
@@ -77,7 +91,9 @@ for (const t of out) {
   const month = t.day.slice(0, 7);
   if (!byMonth.has(month)) byMonth.set(month, []);
   byMonth.get(month).push(t);
-  dayCounts[t.day] = (dayCounts[t.day] || 0) + 1;
+  // context accounts are ambience: don't let them turn news-only days into
+  // "days with posts" for the picker/random-day/neighbor navigation
+  if (!contextLower.has(t.user.toLowerCase())) dayCounts[t.day] = (dayCounts[t.day] || 0) + 1;
 }
 for (const [month, rows] of byMonth) {
   writeFileSync(join(dataDir, `tweets-${month}.json`), JSON.stringify(rows));
@@ -105,18 +121,29 @@ const known = new Set(users.map((u) => u.screen_name));
 const added = [];
 for (const name of [...archiveCount.keys()].sort((a, b) => a.localeCompare(b))) {
   if (known.has(name)) continue;
+  const ctx = contextLower.get(name.toLowerCase());
   users.push({
     screen_name: name,
-    name,
-    description: "",
+    name: ctx ? ctx.name : name,
+    description: ctx ? ctx.description : "",
     location: "",
     avatar: "",
     joined: firstTweet.get(name),
     followers: null,
     following: null,
     statuses: archiveCount.get(name),
+    ...(ctx ? { context: true } : {}),
   });
   added.push(name);
+}
+// keep flags/names on already-known context accounts idempotent across runs
+for (const u of users) {
+  const ctx = contextLower.get(u.screen_name.toLowerCase());
+  if (ctx) {
+    u.context = true;
+    if (u.name === u.screen_name) u.name = ctx.name;
+    if (!u.description) u.description = ctx.description;
+  }
 }
 writeFileSync(join(dataDir, "users.json"), JSON.stringify(users));
 

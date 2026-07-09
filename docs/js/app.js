@@ -21,6 +21,7 @@
   const LS_BLOCKED = "wttm-blocked";
   const LS_PHONE = "wttm-phone-mode";
   const LS_BATHROOM = "wttm-bathroom-mode";
+  const LS_NEWS = "wttm-news-mode";
 
   // Twitter switched tweet IDs from small sequential integers to Snowflake
   // IDs (which encode their creation time) on 2010-11-04. Snowflake IDs
@@ -44,6 +45,8 @@
   let userFilter = null; // screen_name to isolate, or null for everyone
   let blockedUsers = loadBlocked(); // screen names you've blocked, in the order you blocked them
   let blockedLower = new Set(blockedUsers.map((n) => n.toLowerCase()));
+  let contextUsers = new Set(); // lowercase screen names of "the news" context accounts (users.json context flag)
+  let showNews = localStorage.getItem(LS_NEWS) !== "0"; // news-of-the-day posts are on by default
   let searchSeq = 0; // bumps on every view change; cancels in-flight search scans
   const monthCache = new Map();
   let legacyIds = null; // data/legacy-ids.json, loaded lazily
@@ -560,15 +563,19 @@
     if (el) el.scrollIntoView({ block: "start", behavior: "smooth" });
   }
 
-  // hide blocked accounts, plus every tweet that isn't by userFilter
-  // when one is set; label the stream header
+  // hide blocked accounts, news accounts when the news toggle is off, plus
+  // every tweet that isn't by userFilter when one is set; label the stream
+  // header. Isolating a news account (userFilter) overrides the news toggle.
   function applyUserFilter() {
     const tweetsEls = timeline.querySelectorAll(".tweet");
     let visible = 0;
     tweetsEls.forEach((el) => {
+      const lower = el.dataset.user.toLowerCase();
       const hide =
-        blockedLower.has(el.dataset.user.toLowerCase()) ||
-        (Boolean(userFilter) && el.dataset.user !== userFilter);
+        blockedLower.has(lower) ||
+        (userFilter
+          ? el.dataset.user !== userFilter
+          : !showNews && contextUsers.has(lower));
       el.classList.toggle("filtered-out", hide);
       if (!hide) visible++;
     });
@@ -660,11 +667,15 @@
   }
 
   function renderSidebar(dayTweets) {
-    const count = index.dayCounts[currentDay] || dayTweets.length;
-    const voices = new Set(dayTweets.map((t) => t.user)).size;
-    $("#dayCount").textContent = count
-      ? `${count} post${count === 1 ? "" : "s"} by ${voices} account${voices === 1 ? "" : "s"} on this day.`
-      : "the timeline is quiet on this day.";
+    const regular = dayTweets.filter((t) => !contextUsers.has(t.user.toLowerCase()));
+    const count = regular.length;
+    const newsCount = dayTweets.length - count;
+    const voices = new Set(regular.map((t) => t.user)).size;
+    $("#dayCount").textContent =
+      (count
+        ? `${count} post${count === 1 ? "" : "s"} by ${voices} account${voices === 1 ? "" : "s"} on this day.`
+        : "the timeline is quiet on this day.") +
+      (newsCount && showNews ? ` (+${newsCount} from the news)` : "");
     $("#dataMode").textContent = useSupabase
       ? "posts + replies served from Supabase"
       : "static archive mode — replies are saved in this browser only";
@@ -683,6 +694,7 @@
     $("#pageFooter").innerHTML =
       `data from the <a href="https://github.com/codemasher/dril-archive" target="_blank" rel="noopener">dril-archive</a> ` +
       `and <a href="https://web.archive.org/web/2022/https://cooltweets.herokuapp.com/" target="_blank" rel="noopener">Cool Tweets</a> (via the Wayback Machine) · ` +
+      `news-of-the-day context from Wayback captures of the news accounts · ` +
       `<a href="https://github.com/freethebikes/WeirdTwitterTimeMachine" target="_blank" rel="noopener">source</a>`;
   }
 
@@ -708,11 +720,12 @@
       : "";
     const futureReplies = (replies || []).map(replyHtml).join("");
     return `
-      <article class="tweet" data-id="${esc(t.id)}" data-user="${esc(t.user)}">
+      <article class="tweet${u.context ? " context-tweet" : ""}" data-id="${esc(t.id)}" data-user="${esc(t.user)}">
         <img class="avatar" src="${esc(avatar)}" alt="">
         <div class="tweet-body">
           <div class="tweet-head">
             <span class="fullname" title="Show only @${esc(t.user)}">${esc(u.name)}</span>
+            ${u.context ? '<span class="verified" title="Verified account">✓</span>' : ""}
             <span class="username" title="Show only @${esc(t.user)}">@${esc(t.user)}</span>
             <a href="#" class="act-block" title="Hide all posts from @${esc(t.user)}">Block</a>
             <span class="timestamp"><a href="${esc(originalUrl(t))}" target="_blank" rel="noopener" title="${esc(longFmt.format(dayDate(t.day)))} — view original on Twitter">${time}</a></span>
@@ -847,7 +860,10 @@
   async function boot() {
     const [idxRes, usersRes] = await Promise.all([fetch("data/index.json"), fetch("data/users.json")]);
     index = await idxRes.json();
-    for (const u of await usersRes.json()) users.set(u.screen_name, u);
+    for (const u of await usersRes.json()) {
+      users.set(u.screen_name, u);
+      if (u.context) contextUsers.add(u.screen_name.toLowerCase());
+    }
     days = Object.keys(index.dayCounts).sort();
 
     dayPicker.min = index.minDay;
@@ -860,6 +876,15 @@
     autoScroll.addEventListener("change", () => {
       localStorage.setItem(LS_AUTOSCROLL, autoScroll.checked ? "1" : "0");
       if (autoScroll.checked) scrollToNow();
+    });
+
+    const newsMode = $("#newsMode");
+    newsMode.checked = showNews;
+    newsMode.addEventListener("change", () => {
+      showNews = newsMode.checked;
+      localStorage.setItem(LS_NEWS, showNews ? "1" : "0");
+      applyUserFilter();
+      if (currentView === "day") renderSidebar(lastTweets);
     });
 
     const phoneMode = $("#phoneMode");

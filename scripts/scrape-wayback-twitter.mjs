@@ -6,12 +6,17 @@
 // scrape-cooltweets.mjs, so merge-cooltweets.mjs folds it into the site.
 //
 // Usage: node scripts/scrape-wayback-twitter.mjs --user Arr [--cdx-extra file]
-//        [--parse-only] [--max-status N]
+//        [--parse-only] [--max-status N] [--daily] [--profiles-only]
 //
 // --cdx-extra: file of extra captures to include, one "timestamp url" or
 //   CDX-JSON-row per line (e.g. ?lang= profile variants that the CDX server
 //   can only surface through an expensive prefix scan).
 // --parse-only: skip all network fetches, re-parse the HTML cache.
+// --daily: collapse profile captures to one per day. For firehose accounts
+//   (news outlets) one capture/day of the last ~20 tweets is plenty, and the
+//   full digest-distinct set would be 10-30k fetches.
+// --profiles-only: skip the status-page, favstar and AJAX-fragment CDX
+//   queries entirely (they can 504 or return 100k+ rows for huge accounts).
 //
 // Capture eras handled:
 //   2007-2011  <li/tr class="hentry" id="status_N"> + entry-content +
@@ -21,6 +26,10 @@
 //   2013-2015  mobile.twitter.com <table class="tweet"> blocks
 //   2020+      React shell: tweet text only in og:description (title/og:title
 //              carry the display name); exact time comes from the snowflake ID
+//   2012-2019  AJAX JSON fragments (i/profiles/show/<u>/timeline/tweets,
+//              timeline/with_replies, media_timeline, i/<u>/conversation):
+//              items_html wraps ordinary stream markup; each capture is a
+//              ~20-tweet window that often reaches uncaptured years
 //   favstar.fm fs-tweet data-model='{JSON}' blocks
 //
 // Timestamps are exact: snowflake IDs after Nov 2010, ISO title attributes /
@@ -30,6 +39,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = join(root, "data", "cooltweets");
@@ -48,7 +58,9 @@ if (!USER) {
 }
 const LOWER = USER.toLowerCase();
 const parseOnly = args.includes("--parse-only");
-const maxStatus = Number(argVal("--max-status")) || Infinity;
+const maxStatus = argVal("--max-status") != null ? Number(argVal("--max-status")) : Infinity;
+const daily = args.includes("--daily");
+const profilesOnly = args.includes("--profiles-only");
 
 const SNOWFLAKE_EPOCH = 1288834974657n;
 const SNOWFLAKE_MIN = 30000000000n;
@@ -98,6 +110,54 @@ function snowflakeTs(id) {
   return big >= SNOWFLAKE_MIN ? Number(((big >> 22n) + SNOWFLAKE_EPOCH) / 1000n) : null;
 }
 
+// wall-clock time in a named zone -> UTC seconds (two-pass DST correction)
+function zonedToUtc(y, mo, d, h, mi, tz) {
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz, hourCycle: "h23",
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+  });
+  const want = Date.UTC(y, mo, d, h, mi) / 1000;
+  let ts = want;
+  for (let i = 0; i < 2; i++) {
+    const p = fmt.formatToParts(new Date(ts * 1000));
+    const g = (t) => Number(p.find((x) => x.type === t).value);
+    ts += want - Date.UTC(g("year"), g("month") - 1, g("day"), g("hour"), g("minute")) / 1000;
+  }
+  return ts;
+}
+
+const MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+
+// Pre-snowflake captures whose markup has no ISO timestamp render tweet
+// times as wall-clock text. Formats seen (offsets verified against captures
+// that also carry ISO/snowflake twins):
+//   "09:25 AM April 04, 2007"  2006-07 table markup, US Eastern (-4:00 exact)
+//   "5:31 AM Sep 17th"         2009-10 logged-out pages, US Pacific (-7:00
+//                              exact; Twitter's old default account timezone)
+//   "about 4 hours ago"        relative to the capture moment
+function parseRenderedTime(txt, captureTs, tz) {
+  txt = decodeEntities(txt).trim();
+  const rel = txt.match(/^(?:about |less than |over )?(a|an|half a|\d+) (second|minute|hour|day)s? ago$/i);
+  if (rel) {
+    if (!captureTs) return null;
+    const n = /^\d+$/.test(rel[1]) ? Number(rel[1]) : rel[1] === "half a" ? 0.5 : 1;
+    return Math.round(captureTs - n * { second: 1, minute: 60, hour: 3600, day: 86400 }[rel[2].toLowerCase()]);
+  }
+  const m = txt.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)\s+(\w+)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?$/i);
+  if (!m) return null;
+  const mon = MONTHS[m[4].toLowerCase().slice(0, 3)];
+  if (mon == null) return null;
+  const h = (Number(m[1]) % 12) + (m[3].toUpperCase() === "PM" ? 12 : 0);
+  const day = Number(m[5]);
+  const min = Number(m[2]);
+  const year = m[6] ? Number(m[6]) : new Date((captureTs ?? Date.now() / 1000) * 1000).getUTCFullYear();
+  let ts = zonedToUtc(year, mon, day, h, min, tz);
+  // year-less dates belong to the year of the capture unless that lands in
+  // the capture's future — then it's the previous year
+  if (!m[6] && captureTs && ts > captureTs + 86400) ts = zonedToUtc(year - 1, mon, day, h, min, tz);
+  return ts;
+}
+
 function makeTweet(id, ts, text, extra = {}) {
   return {
     id,
@@ -117,26 +177,45 @@ function makeTweet(id, ts, text, extra = {}) {
  * `isRT` marks the owner retweeting someone else (kept, prefixed "RT @").
  */
 
-// 2007-2011 markup: profile timelines and single-status pages
-function parseOldEra(html) {
+// 2006-2011 markup: profile timelines and single-status pages
+function parseOldEra(html, captureTs) {
   const out = [];
   const re = /id="status_(\d+)"([\s\S]*?)(?=id="status_\d+"|<\/(?:table|ol|body)>|$)/g;
   for (const m of html.matchAll(re)) {
     const [, id, block] = m;
     if (/class="status_actions"/.test(m[0]) && !/entry-content/.test(block)) continue;
     const textM = block.match(/<span class="entry-content">([\s\S]*?)<\/span>/);
-    if (!textM) continue;
-    const iso = block.match(/class="published"[^>]*title="([^"]+)"/);
-    const ts = snowflakeTs(id) ?? (iso ? Math.floor(Date.parse(iso[1]) / 1000) : null);
+    let text;
+    if (textM) {
+      text = tweetText(textM[1]);
+    } else {
+      // 2006-2007 table markup: bare tweet text in the <td>, before the meta span
+      const td = block.match(/<td>([\s\S]*?)<span class="meta">/);
+      if (!td) continue;
+      text = tweetText(td[1]);
+    }
+    let ts = snowflakeTs(id);
+    if (ts == null) {
+      const iso = block.match(/class="published"[^>]*title="([^"]+)"/);
+      if (iso) ts = Math.floor(Date.parse(iso[1]) / 1000);
+    }
+    if (ts == null) {
+      // no ISO title: rendered wall-clock text (see parseRenderedTime)
+      const pub = block.match(/<span class="published">([^<]+)<\/span>/);
+      const meta = block.match(/<span class="meta">[\s\S]*?statuses\/\d+"[^>]*>([^<]+)<\/a>/);
+      if (pub) ts = parseRenderedTime(pub[1], captureTs, "America/Los_Angeles");
+      else if (meta) ts = parseRenderedTime(meta[1], captureTs, "America/New_York");
+    }
     if (ts == null || Number.isNaN(ts)) continue;
     // old-era pages only ever show the owner's own tweets
-    out.push({ id, ts, text: tweetText(textM[1]) });
+    out.push({ id, ts, text });
   }
   return out;
 }
 
-// 2012-2019 desktop markup: profile streams and permalink pages
-function parseStreamEra(html, { isPermalink }) {
+// 2012-2019 desktop markup: profile streams, permalink pages, and the
+// JSON timeline/conversation fragments (items_html) that carry the same markup
+function parseStreamEra(html, { isPermalink, ajaxFragment }) {
   const out = [];
   const starts = [...html.matchAll(
     /<(?:div|li)[^>]*class="[^"]*(?:js-stream-tweet|permalink-tweet|tweet js-actionable-tweet)[^"]*"/g
@@ -152,9 +231,11 @@ function parseStreamEra(html, { isPermalink }) {
       retweeter === LOWER || new RegExp(`js-retweet-text[\\s\\S]{0,300}?@?${LOWER}\\b`, "i").test(block);
     const isRT = author && author !== LOWER && retweetedByOwner;
     if (author && author !== LOWER && !isRT) {
-      // permalink pages show strangers' thread context; profile streams
-      // before data-retweeter only ever showed foreign tweets as retweets
-      if (isPermalink) continue;
+      // permalink pages show strangers' thread context; with_replies and
+      // conversation fragments splice in other people's replies inline;
+      // profile streams before data-retweeter only showed foreign tweets
+      // as retweets
+      if (isPermalink || ajaxFragment) continue;
     }
     const textM = block.match(/<p[^>]*class="[^"]*tweet-text[^"]*"[^>]*>([\s\S]*?)<\/p>/);
     if (!textM) continue;
@@ -259,13 +340,41 @@ function parseFavstar(html) {
   return out;
 }
 
-function parseAny(html, { urlId, isPermalink, host }) {
+// old-Twitter infinite-scroll AJAX: timeline/tweets, timeline/with_replies,
+// media_timeline and i/<user>/conversation all return JSON whose items_html
+// holds the ordinary 2012-2019 stream markup (JSON.parse handles the \" \/ \n
+// escaping). A single capture can carry a window of ~20 older tweets, so these
+// reach years Wayback never captured as standalone profile pages.
+function parseAjaxFragment(html) {
+  let j;
+  try {
+    j = JSON.parse(html);
+  } catch {
+    return null;
+  }
+  const items =
+    j.items_html ||
+    j.descendants?.items_html ||
+    Object.values(j).find((v) => typeof v === "string" && /data-tweet-id="/.test(v));
+  if (typeof items !== "string" || !/data-tweet-id="/.test(items)) return [];
+  return parseStreamEra(items, { isPermalink: false, ajaxFragment: true });
+}
+
+function parseAny(html, { urlId, isPermalink, host, captureTs }) {
+  if (html.trimStart().startsWith("{")) {
+    const ajax = parseAjaxFragment(html);
+    if (ajax) return ajax;
+  }
   if (host === "favstar.fm") return parseFavstar(html);
   if (host === "mobile.twitter.com" && /<table class="tweet/.test(html)) return parseMobileEra(html);
-  if (/id="status_\d+"/.test(html)) return parseOldEra(html);
+  if (/id="status_\d+"/.test(html)) return parseOldEra(html, captureTs);
   if (/data-tweet-id="/.test(html)) return parseStreamEra(html, { isPermalink });
   return parseReactEra(html, urlId);
 }
+
+// 14-digit Wayback capture timestamp -> UTC seconds
+const captureUtc = (t) =>
+  Date.UTC(+t.slice(0, 4), +t.slice(4, 6) - 1, +t.slice(6, 8), +t.slice(8, 10), +t.slice(10, 12), +t.slice(12, 14)) / 1000;
 
 /* ---------------- CDX enumeration ---------------- */
 
@@ -309,6 +418,9 @@ function isOurs(original) {
     const u = new URL(original);
     const path = decodeURIComponent(u.pathname);
     if (u.hostname.endsWith("favstar.fm")) return new RegExp(`^/users/${LOWER}(/|$)`, "i").test(path);
+    // old-Twitter AJAX timeline / conversation endpoints for this user
+    if (new RegExp(`^/i/profiles/show/${LOWER}/`, "i").test(path)) return true;
+    if (new RegExp(`^/i/${LOWER}/conversation/`, "i").test(path)) return true;
     return new RegExp(`^/${LOWER}([/?]|$)`, "i").test(path);
   } catch {
     return false;
@@ -323,13 +435,23 @@ function classify(original) {
   if (statusM) return { kind: "status", id: statusM[1], host };
   if (new RegExp(`^/${LOWER}$`, "i").test(path) || new RegExp(`^/users/${LOWER}$`, "i").test(path))
     return { kind: "profile", host };
+  // JSON timeline/conversation fragments parse like extra profile pages
+  if (/^\/i\/profiles\/show\//i.test(path) || /^\/i\/[^/]+\/conversation\//i.test(path))
+    return { kind: "profile", host, ajax: true };
   return { kind: "other", host };
 }
 
 /* ---------------- capture download ---------------- */
 
 function cacheName(timestamp, original) {
-  return join(htmlDir, `${timestamp}_${original.replace(/[^A-Za-z0-9_.-]+/g, "_")}.html`);
+  let slug = original.replace(/[^A-Za-z0-9_.-]+/g, "_");
+  // AJAX conversation URLs carry ~300-char max_position params; keep the
+  // filename under the 255-byte limit by hashing the tail
+  if (slug.length > 180) {
+    const hash = createHash("sha1").update(original).digest("hex").slice(0, 12);
+    slug = `${slug.slice(0, 160)}_${hash}`;
+  }
+  return join(htmlDir, `${timestamp}_${slug}.html`);
 }
 
 let lastFetch = 0;
@@ -357,11 +479,20 @@ async function getCapture(cap) {
 console.log(`enumerating Wayback captures for @${USER} ...`);
 const captures = [];
 if (!parseOnly) {
-  captures.push(...(await cdx(`url=twitter.com/${USER}&collapse=digest`)));
-  captures.push(...(await cdx(`url=twitter.com/${USER}/status*`)));
-  captures.push(...(await cdx(`url=mobile.twitter.com/${USER}&collapse=digest`)));
-  captures.push(...(await cdx(`url=mobile.twitter.com/${USER}/status*`)));
-  captures.push(...(await cdx(`url=favstar.fm/users/${USER}*`)));
+  const profileCollapse = daily ? "collapse=timestamp:8" : "collapse=digest";
+  captures.push(...(await cdx(`url=twitter.com/${USER}&${profileCollapse}`)));
+  captures.push(...(await cdx(`url=mobile.twitter.com/${USER}&${profileCollapse}`)));
+  if (!profilesOnly) {
+    captures.push(...(await cdx(`url=twitter.com/${USER}/status*`)));
+    captures.push(...(await cdx(`url=mobile.twitter.com/${USER}/status*`)));
+    captures.push(...(await cdx(`url=favstar.fm/users/${USER}*`)));
+    // old-Twitter infinite-scroll AJAX endpoints: each capture holds a JSON
+    // window of ~20 tweets, often reaching years with no standalone captures
+    captures.push(...(await cdx(`url=twitter.com/i/profiles/show/${USER}/timeline/tweets*`)));
+    captures.push(...(await cdx(`url=twitter.com/i/profiles/show/${USER}/timeline/with_replies*`)));
+    captures.push(...(await cdx(`url=twitter.com/i/profiles/show/${USER}/media_timeline*`)));
+    captures.push(...(await cdx(`url=twitter.com/i/${USER}/conversation*`)));
+  }
 }
 const extraFile = argVal("--cdx-extra");
 if (extraFile) {
@@ -441,7 +572,7 @@ for (const cap of profileCaps.sort((a, b) => a.timestamp.localeCompare(b.timesta
   const html = await getCapture(cap);
   done++;
   if (!html) continue;
-  const found = parseAny(html, { isPermalink: false, host: cap.host });
+  const found = parseAny(html, { isPermalink: false, host: cap.host, captureTs: captureUtc(cap.timestamp) });
   const added = absorb(found, "profile");
   snapshots.add(`https://web.archive.org/web/${cap.timestamp}/${cap.original}`);
   if (done % 25 === 0 || added > 10)
@@ -469,7 +600,7 @@ for (const id of idsWanted) {
   for (const cap of order) {
     const html = await getCapture(cap);
     if (!html) continue;
-    const found = parseAny(html, { urlId: id, isPermalink: true, host: cap.host });
+    const found = parseAny(html, { urlId: id, isPermalink: true, host: cap.host, captureTs: captureUtc(cap.timestamp) });
     if (!found.length) continue;
     absorb(found, "status");
     snapshots.add(`https://web.archive.org/web/${cap.timestamp}/${cap.original}`);

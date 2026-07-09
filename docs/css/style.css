@@ -219,6 +219,17 @@ a:hover { text-decoration: underline; }
 .tweet-head .username { color: #999; font-size: 12px; }
 .tweet-head .fullname, .tweet-head .username { cursor: pointer; }
 .tweet-head .fullname:hover, .tweet-head .username:hover { text-decoration: underline; color: #0084b4; }
+.tweet-head .verified {
+  /* the old blue verified tick, worn by the news-of-the-day context accounts */
+  flex-shrink: 0;
+  width: 13px; height: 13px;
+  border-radius: 50%;
+  background: #4a99e9;
+  color: #fff;
+  font-size: 9px; line-height: 13px;
+  text-align: center;
+  align-self: center;
+}
 .tweet-head .act-block { visibility: hidden; font-size: 11px; font-weight: bold; color: #999; }
 .tweet-head:hover .act-block { visibility: visible; }
 .tweet-head .act-block:hover { color: #d40d12; text-decoration: none; }
