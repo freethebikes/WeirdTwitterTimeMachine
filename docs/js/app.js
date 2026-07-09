@@ -1016,6 +1016,18 @@
     }
   }
 
+  /* ---------- mobile sidebar drawer ---------- */
+
+  const menuBtn = $("#menuBtn");
+  function setSidebarOpen(open) {
+    document.body.classList.toggle("sidebar-open", open);
+    menuBtn.setAttribute("aria-expanded", String(open));
+  }
+  menuBtn.addEventListener("click", () => setSidebarOpen(!document.body.classList.contains("sidebar-open")));
+  $("#sidebarBackdrop").addEventListener("click", () => setSidebarOpen(false));
+  // any navigation (new day, year link, search, …) closes the drawer
+  window.addEventListener("hashchange", () => setSidebarOpen(false));
+
   boot().catch((err) => {
     timeline.innerHTML = `<div class="state-box">Failed to start: ${esc(err.message)}</div>`;
   });

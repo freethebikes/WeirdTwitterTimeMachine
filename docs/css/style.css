@@ -31,6 +31,16 @@ a:hover { text-decoration: underline; }
   align-items: center;
   padding: 0 10px;
 }
+.menu-btn { /* opens the sidebar drawer; only shown on small screens */
+  display: none;
+  background: none;
+  border: none;
+  font-size: 20px;
+  line-height: 1;
+  color: #555;
+  padding: 8px 10px 8px 2px;
+  cursor: pointer;
+}
 .topnav { display: flex; gap: 4px; flex: 1; }
 .topnav a {
   color: #666;
@@ -674,8 +684,60 @@ body.phone-mode .ph-12 .ph-ampm, body.phone-mode .ph-14 .ph-ampm { display: none
 .state-box .state-links { margin-top: 10px; font-size: 13px; }
 .state-box .state-links a { margin: 0 8px; font-weight: bold; }
 
+/* ---- mobile ---- */
+.sidebar-backdrop {
+  display: none;
+  position: fixed;
+  top: 40px; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 25;
+}
+
 @media (max-width: 700px) {
-  .page { flex-direction: column; }
-  .sidebar { width: 100%; position: static; max-height: none; overflow: visible; }
-  .topsearch { display: none; }
+  .menu-btn { display: block; }
+
+  /* icon tabs, like the old mobile apps; labels hide, icons stay */
+  .topnav { gap: 0; flex: 0 0 auto; }
+  .topnav a { font-size: 0; padding: 10px 9px; }
+  .topnav a .nav-ico { font-size: 16px; }
+  .bird { padding: 0 8px; }
+  .topsearch { flex: 1 1 0; min-width: 0; }
+  .topsearch input { width: 100%; min-width: 0; max-width: 200px; font-size: 16px; }
+
+  .page { display: block; }
+  .stream { width: 100%; }
+
+  /* the sidebar becomes a drawer that slides in under the ☰ button */
+  .sidebar {
+    position: fixed;
+    top: 40px; left: 0; bottom: 0;
+    width: min(320px, 86vw);
+    max-height: none;
+    padding: 10px;
+    background: #c0deed;
+    box-shadow: 2px 0 14px rgba(0, 0, 0, 0.3);
+    transform: translateX(-110%);
+    transition: transform 0.22s ease;
+    overflow-y: auto;
+    z-index: 30;
+  }
+  body.sidebar-open .sidebar { transform: translateX(0); }
+  body.sidebar-open .sidebar-backdrop { display: block; }
+  body.sidebar-open { overflow: hidden; }
+
+  /* no hover on a touch screen: keep Reply / View original visible */
+  .tweet-actions { visibility: visible; }
+
+  /* long names truncate instead of shoving the timestamp offscreen */
+  .tweet-head .fullname, .tweet-head .username {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .tweet-head .act-block { display: none; } /* hover-only; no hover on touch */
+
+  /* 16px inputs stop iOS Safari from zooming the page on focus */
+  .tm-controls input[type="date"] { font-size: 16px; }
+  .rc-row input, .reply-composer textarea { font-size: 16px; }
 }
