@@ -343,16 +343,16 @@ a:hover { text-decoration: underline; }
 }
 .phonemode .pm-sub { margin-top: 6px; padding-left: 18px; }
 
-/* bathroom at work: the page container becomes the stall floor, phone held
+/* bathroom at work: the whole page becomes the stall floor, phone held
    over the tile (the floor stays put while the timeline scrolls) */
-body.bathroom-mode .page {
+body.bathroom-mode {
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
   background-attachment: fixed;
 }
-body.bathroom-1 .page { background-image: url("../assets/floor1.jpg"); }
-body.bathroom-2 .page { background-image: url("../assets/floor2.jpg"); }
+body.bathroom-1 { background-image: url("../assets/floor1.jpg"); }
+body.bathroom-2 { background-image: url("../assets/floor2.jpg"); }
 body.phone-mode.bathroom-mode .stream { padding: 30px 0 24px; }
 /* dim stall lighting at the viewport edges (under the topbar) */
 body.bathroom-mode::before {
