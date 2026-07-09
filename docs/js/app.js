@@ -525,6 +525,15 @@
     return pool[Math.floor(Math.random() * pool.length)];
   }
 
+  // today's month-day in a random year that has posts, preferring busier days
+  function todayRandomYear() {
+    const candidates = index.years.map((y) => todayInYear(Number(y))).filter((d) => index.dayCounts[d]);
+    if (!candidates.length) return null;
+    const rich = candidates.filter((d) => index.dayCounts[d] >= 8);
+    const pool = rich.length ? rich : candidates;
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+
   function neighborDay(day, dir) {
     // nearest day with posts, strictly before (dir=-1) or after (dir=+1)
     if (dir < 0) {
@@ -553,10 +562,14 @@
 
   function scrollToNow() {
     if (!lastTweets.length) return;
-    const nowMin = minuteOfDay(new Date());
+    // the visitor's wall clock, not TZ: tweets are displayed in TZ, but "the
+    // current time of day" means whatever the visitor's own clock says
+    const now = new Date();
+    const nowMin = now.getHours() * 60 + now.getMinutes();
     let best = null;
     for (const t of lastTweets) {
-      const diff = Math.abs(minuteOfDay(new Date(t.ts * 1000)) - nowMin);
+      const raw = Math.abs(minuteOfDay(new Date(t.ts * 1000)) - nowMin);
+      const diff = Math.min(raw, 1440 - raw); // clock distance wraps at midnight
       if (!best || diff < best.diff) best = { id: t.id, diff };
     }
     const el = timeline.querySelector(`[data-id="${CSS.escape(best.id)}"]`);
@@ -1037,7 +1050,7 @@
     } else if (bootSearch !== null) {
       renderSearch(bootSearch);
     } else {
-      setDay(dayFromHash() || goldenRandomDay());
+      setDay(dayFromHash() || todayRandomYear() || goldenRandomDay());
     }
   }
 
