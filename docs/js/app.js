@@ -54,6 +54,7 @@
   let lastTweets = []; // tweets currently on screen (for the time-of-day jump)
   let session = null; // Supabase Auth session, or null when signed out
   let profile = null; // row from profiles for the signed-in user
+  let isModerator = false; // signed-in user has a row in moderators
   let likedSet = new Set(); // ids you've liked ("u"-prefixed for user posts)
   let followedSet = new Set(); // lowercase screen names you follow
   let onlyFollowing = localStorage.getItem(LS_FOLLOW_MODE) === "1";
@@ -133,7 +134,16 @@
       headers,
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     });
-    if (!res.ok) throw new Error(`Supabase HTTP ${res.status}`);
+    if (!res.ok) {
+      // surface PostgREST's message ("this account is suspended", …) when
+      // there is one; fall back to the bare status
+      let msg = `Supabase HTTP ${res.status}`;
+      try {
+        const detail = (await res.json()).message;
+        if (detail) msg = detail;
+      } catch { /* not JSON */ }
+      throw new Error(msg);
+    }
     return res.status === 204 ? null : res.json();
   }
 
@@ -245,7 +255,7 @@
   async function onSignedIn() {
     try {
       profile = await ensureProfile();
-      await Promise.all([loadOwnedState(), mergeBlocksToServer()]);
+      await Promise.all([loadOwnedState(), mergeBlocksToServer(), loadModeratorFlag()]);
     } catch (err) {
       console.warn("account setup failed:", err);
     }
@@ -262,6 +272,7 @@
 
   function onSignedOut() {
     profile = null;
+    isModerator = false;
     likedSet = new Set();
     followedSet = new Set();
     renderAccountUI();
@@ -310,6 +321,16 @@
     ]);
     likedSet = new Set(likes.map((r) => (r.post_id != null ? "u" + r.post_id : r.tweet_id)));
     followedSet = new Set(follows.map((r) => r.screen_name.toLowerCase()));
+  }
+
+  async function loadModeratorFlag() {
+    // tolerate a database that predates the moderation migration
+    try {
+      const rows = await sbFetch(`moderators?user_id=eq.${session.user.id}&select=user_id`);
+      isModerator = rows.length > 0;
+    } catch {
+      isModerator = false;
+    }
   }
 
   // Union the browser's block list with the server's so blocks made while
@@ -402,6 +423,7 @@
         <a href="#/${esc(todayNY())}">Post to today</a>
         <a href="#/liked">Posts you've liked</a>
         <a href="#/following">Following</a>
+        ${isModerator ? `<a href="#/mod">Moderation</a>` : ""}
         <a href="#" id="editProfileLink">Edit profile</a>
         <a href="#" id="signOutLink">Sign out</a>
       </div>`;
@@ -417,6 +439,7 @@
     else if (currentView === "post" && currentPostId) renderPost(currentPostId);
     else if (currentView === "liked") renderLiked();
     else if (currentView === "following") renderFollowing();
+    else if (currentView === "mod") renderModeration();
   }
 
   /* ---------- account modals ---------- */
@@ -512,6 +535,35 @@
         closeModal();
       } catch {
         status.textContent = "That handle is taken (or belongs to an archive account). Try another.";
+      }
+    });
+  }
+
+  // target is { post_id } or { reply_id }; the server snapshots everything
+  // else (who wrote it, its text) from the id, so nothing here is trusted.
+  function openReportModal(target, handle, text) {
+    const overlay = openModal(`
+      <h2>Report @${esc(handle)}</h2>
+      <blockquote class="wm-quote">${esc(text)}</blockquote>
+      <form class="wm-report">
+        <textarea placeholder="What's wrong with it? (optional)" maxlength="500"></textarea>
+        <button type="submit">Send report</button>
+      </form>
+      <div class="wm-status"></div>`);
+    const status = overlay.querySelector(".wm-status");
+    overlay.querySelector(".wm-report").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const reason = overlay.querySelector("textarea").value.trim();
+      status.textContent = "sending…";
+      try {
+        await sbFetch("reports", { method: "POST", body: { ...target, reason: reason || null } });
+        overlay.querySelector(".wm-box").innerHTML =
+          `<h2>Report sent</h2><p class="wm-blurb">Thanks — a moderator will take a look.</p>`;
+        setTimeout(closeModal, 1500);
+      } catch (err) {
+        status.textContent = /duplicate/.test(err.message)
+          ? "You've already reported this."
+          : `Couldn't send the report (${err.message}).`;
       }
     });
   }
@@ -916,6 +968,102 @@
         .join("");
   }
 
+  /* ---------- moderation ---------- */
+
+  async function renderModeration() {
+    const seq = ++searchSeq;
+    currentView = "mod";
+    setActiveNav();
+    document.title = "Moderation — Weird Twitter Time Machine";
+    document.querySelectorAll("#yearList a").forEach((a) => a.classList.remove("active"));
+    $("#dayCount").textContent = "";
+
+    if (!useSupabase || !profile || !isModerator) {
+      timeline.innerHTML = backBox() + `<div class="state-box">This page is for the site's moderators.</div>`;
+      return;
+    }
+    timeline.innerHTML = `<div class="state-box">loading reports…</div>`;
+    let reports, banned;
+    try {
+      [reports, banned] = await Promise.all([
+        sbFetch(`reports?resolved_at=is.null&order=created_at.desc&select=*`),
+        sbFetch(`profiles?banned_at=not.is.null&order=banned_at.desc&select=id,handle,display_name,avatar,banned_at`),
+      ]);
+    } catch (err) {
+      timeline.innerHTML = backBox() + `<div class="state-box">Couldn't load moderation data (${esc(err.message)}).</div>`;
+      return;
+    }
+    if (seq !== searchSeq) return;
+
+    const bannedIds = new Set(banned.map((p) => p.id));
+    const when = (iso) => {
+      const d = new Date(iso);
+      return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+    };
+
+    const reportsHtml = reports.length
+      ? reports
+          .map((r) => `
+            <div class="mod-report" data-report-id="${esc(r.id)}" data-reported-id="${esc(r.reported_id)}">
+              <div class="mod-head">
+                <b>@${esc(r.reported_handle)}</b> reported by @${esc(r.reporter_handle || "?")} · ${esc(when(r.created_at))}
+                ${r.target_id ? ` · <a href="#/post/${esc(r.target_id)}">view post</a>` : ""}
+              </div>
+              <blockquote class="mod-quote">${esc(r.content)}</blockquote>
+              ${r.reason ? `<div class="mod-reason">“${esc(r.reason)}”</div>` : ""}
+              <div class="mod-actions">
+                ${bannedIds.has(r.reported_id)
+                  ? `<button type="button" class="mod-btn mod-unban">Unban @${esc(r.reported_handle)}</button>`
+                  : `<button type="button" class="mod-btn mod-ban">Ban @${esc(r.reported_handle)}</button>`}
+                <button type="button" class="mod-btn mod-dismiss">Dismiss report</button>
+              </div>
+            </div>`)
+          .join("")
+      : `<div class="state-box">No open reports. The past is at peace.</div>`;
+
+    const bannedHtml = banned.length
+      ? banned
+          .map((p) => `
+            <div class="blocked-row" data-reported-id="${esc(p.id)}">
+              <img class="avatar" src="${esc(p.avatar || "assets/egg.svg")}" alt="">
+              <div class="blocked-who">
+                <span class="fullname">${esc(p.display_name)}</span>
+                <span class="username">@${esc(p.handle)} · banned ${esc(when(p.banned_at))}</span>
+              </div>
+              <button type="button" class="bl-unblock mod-unban">Unban</button>
+            </div>`)
+          .join("")
+      : `<div class="state-box">Nobody is banned.</div>`;
+
+    timeline.innerHTML =
+      backBox() +
+      `<div class="mod-section-head">Open reports</div>` + reportsHtml +
+      `<div class="mod-section-head">Banned accounts</div>` + bannedHtml;
+  }
+
+  // Ban/unban flip profiles.banned_at (RLS lets only moderators do this);
+  // banning from a report card also resolves that report.
+  async function moderate(el) {
+    const row = el.closest("[data-reported-id]");
+    const uid = row.dataset.reportedId;
+    const reportId = el.closest("[data-report-id]") && el.closest("[data-report-id]").dataset.reportId;
+    el.disabled = true;
+    try {
+      if (el.classList.contains("mod-ban")) {
+        await sbFetch(`profiles?id=eq.${uid}`, { method: "PATCH", body: { banned_at: new Date().toISOString() } });
+        if (reportId) await sbFetch(`reports?id=eq.${reportId}`, { method: "PATCH", body: { resolved_at: new Date().toISOString() } });
+      } else if (el.classList.contains("mod-unban")) {
+        await sbFetch(`profiles?id=eq.${uid}`, { method: "PATCH", body: { banned_at: null } });
+      } else if (el.classList.contains("mod-dismiss")) {
+        await sbFetch(`reports?id=eq.${reportId}`, { method: "PATCH", body: { resolved_at: new Date().toISOString() } });
+      }
+      renderModeration();
+    } catch (err) {
+      el.disabled = false;
+      alert(`That didn't work (${err.message}).`);
+    }
+  }
+
   /* ---------- search ---------- */
 
   const SEARCH_CAP = 200;
@@ -1236,10 +1384,12 @@
   function replyHtml(r, parentId) {
     const when = new Date(r.created_at);
     const stamp = `${when.toLocaleDateString()} ${when.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+    // only replies by registered accounts are reportable (and not your own)
+    const canReport = useSupabase && r.id && r.user_id && (!session || r.user_id !== session.user.id);
     return `
-      <div class="future-reply">
-        <div class="fr-head"><b>${esc(r.author)}</b> · ${parentId ? `<a href="#/post/${esc(parentId)}" title="Permalink">${stamp}</a>` : stamp} <span class="fr-badge">FROM THE FUTURE</span></div>
-        <div>${linkify(r.text)}</div>
+      <div class="future-reply"${r.id ? ` data-reply-id="${esc(r.id)}" data-author="${esc(r.author)}"` : ""}>
+        <div class="fr-head"><b>${esc(r.author)}</b> · ${parentId ? `<a href="#/post/${esc(parentId)}" title="Permalink">${stamp}</a>` : stamp} <span class="fr-badge">FROM THE FUTURE</span>${canReport ? ` <a href="#" class="act-report fr-report" title="Report this reply to the moderators">Report</a>` : ""}</div>
+        <div class="fr-text">${linkify(r.text)}</div>
       </div>`;
   }
 
@@ -1282,6 +1432,7 @@
           <div class="tweet-actions">
             <a href="#" class="act-reply">Reply</a>
             ${useSupabase ? `<a href="#" class="act-like${liked ? " liked" : ""}">${liked ? "★ Liked" : "☆ Like"}</a>` : ""}
+            ${t.userPost && (!profile || t.user !== profile.handle) ? `<a href="#" class="act-report" title="Report this post to the moderators">Report</a>` : ""}
             ${t.userPost ? "" : `<a href="${esc(originalUrl(t))}" target="_blank" rel="noopener">View original ↗</a>`}
             ${opts.dayLink ? `<a href="#/${esc(t.day)}">Time-travel to this day</a>` : ""}
           </div>
@@ -1315,6 +1466,11 @@
     if (useSupabase && !profile) {
       slot.innerHTML = `<div class="rc-signin">Sign in to reply from the future. <button type="button" class="rc-signin-btn">Sign in</button></div>`;
       slot.querySelector(".rc-signin-btn").addEventListener("click", openLoginModal);
+      return;
+    }
+    if (useSupabase && profile.banned_at) {
+      // the stamp triggers reject the write anyway; this just says so up front
+      slot.innerHTML = `<div class="rc-signin rc-suspended">Your account is suspended — you can read, but not post.</div>`;
       return;
     }
     slot.innerHTML = composerHtml();
@@ -1446,7 +1602,11 @@
     // you can only post into the present: the composer appears on today's
     // date, and past days get a gentle pointer instead
     const isToday = day === todayNY();
-    const composer = profile && isToday ? postComposerHtml() : "";
+    const composer = profile && isToday
+      ? profile.banned_at
+        ? `<div class="present-note rc-suspended">Your account is suspended — you can read, but not post.</div>`
+        : postComposerHtml()
+      : "";
     const presentNote = profile && !isToday
       ? `<div class="present-note">✎ posting happens in the present — <a href="#/${esc(todayNY())}">go to today</a></div>`
       : "";
@@ -1588,6 +1748,7 @@
       if (location.hash === "#/likes") { renderLikes(); return; }
       if (location.hash === "#/liked") { renderLiked(); return; }
       if (location.hash === "#/following") { renderFollowing(); return; }
+      if (location.hash === "#/mod") { renderModeration(); return; }
       const pm = location.hash.match(/^#\/post\/(u?\d+)$/);
       if (pm) { renderPost(pm[1]); return; }
       const q = searchFromHash();
@@ -1616,6 +1777,25 @@
       if (like) {
         e.preventDefault();
         toggleLike(like.closest(".tweet").dataset.id);
+        return;
+      }
+      const report = e.target.closest(".act-report");
+      if (report) {
+        e.preventDefault();
+        if (!profile) { openLoginModal(); return; }
+        const fr = report.closest(".future-reply");
+        if (fr) {
+          openReportModal({ reply_id: Number(fr.dataset.replyId) }, fr.dataset.author, fr.querySelector(".fr-text").textContent);
+        } else {
+          const tw = report.closest(".tweet");
+          openReportModal({ post_id: Number(postDbId(tw.dataset.id)) }, tw.dataset.user, tw.querySelector(".tweet-text").textContent);
+        }
+        return;
+      }
+      // before .bl-unblock: the banned list's Unban button reuses that class
+      const modBtn = e.target.closest(".mod-ban, .mod-unban, .mod-dismiss");
+      if (modBtn) {
+        moderate(modBtn);
         return;
       }
       const follow = e.target.closest(".act-follow");
@@ -1725,6 +1905,8 @@
       renderLiked();
     } else if (location.hash === "#/following") {
       renderFollowing();
+    } else if (location.hash === "#/mod") {
+      renderModeration();
     } else if (bootPost) {
       renderPost(bootPost[1]);
     } else if (bootSearch !== null) {

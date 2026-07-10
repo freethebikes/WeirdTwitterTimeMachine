@@ -126,6 +126,42 @@ What signing in gets you:
 - **Blocks** sync to the server; a block list built while signed out is
   merged up on your next sign-in.
 
+### Moderation
+
+Any signed-in user can report a present-day post or reply (the "Report" link
+on user posts and replies). Reports snapshot the offending text and author
+server-side, so they stay reviewable even if the content is deleted.
+
+**Make yourself a moderator** — in the SQL editor:
+
+```sql
+insert into public.moderators (user_id)
+select id from public.profiles where handle = 'yourhandle';
+```
+
+Moderators get a "Moderation" entry in the account menu (`#/mod`) listing
+open reports — with ban/dismiss buttons — and every banned account, with
+unban. Banning flips `profiles.banned_at`; a banned account can still sign
+in and read, but the `stamp_post`/`stamp_reply` triggers reject anything it
+tries to write, and its existing content stays up. Unbanning clears the flag.
+
+**Email on new reports (optional)** — each report can also email you, via
+[Resend](https://resend.com) called from a `pg_net` trigger. It's off until
+these Vault secrets exist (SQL editor again):
+
+```sql
+select vault.create_secret('re_xxxxxxxx', 'resend_api_key');
+select vault.create_secret('you@example.com', 'moderator_email');
+-- optional, adds "view post" links to the email:
+select vault.create_secret('https://freethebikes.github.io/WeirdTwitterTimeMachine/', 'site_url');
+```
+
+The email is sent from Resend's shared `onboarding@resend.dev` address,
+which (without verifying your own domain in Resend) can only deliver to the
+email address your Resend account is registered under — sign up with the
+address you want the reports at. Email failures never block the report
+itself; it always lands in `#/mod`.
+
 ## Regenerating data from a fresh archive export
 
 ```

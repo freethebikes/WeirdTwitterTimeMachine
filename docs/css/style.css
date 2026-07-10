@@ -894,3 +894,76 @@ body.phone-mode .ph-12 .ph-ampm, body.phone-mode .ph-14 .ph-ampm { display: none
 .tweet.user-post { background: #fbfdfe; }
 .tweet-head .up-badge { flex-shrink: 0; }
 .tweet-actions .act-like.liked { color: #ffac33; }
+.rc-suspended { color: #d40d12; }
+
+/* ---- reporting + moderation ---- */
+.fr-report { font-size: 10px; color: #bbb; margin-left: 4px; }
+.fr-report:hover { color: #d40d12; text-decoration: none; }
+.wm-quote {
+  border-left: 2px solid #dbe8ee;
+  padding: 4px 0 4px 9px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: #333;
+  max-height: 120px;
+  overflow-y: auto;
+  word-wrap: break-word;
+}
+.wm-report textarea {
+  width: 100%;
+  height: 54px;
+  padding: 6px 8px;
+  border: 1px solid #cbd6db;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 12px;
+  resize: vertical;
+  outline: none;
+  margin-bottom: 8px;
+}
+.wm-report textarea:focus { border-color: #55acee; }
+.wm-report button {
+  background: linear-gradient(#55acee, #3b88c3);
+  border: 1px solid #3b88c3;
+  border-radius: 4px;
+  color: #fff;
+  font-weight: bold;
+  font-size: 12px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.mod-section-head {
+  padding: 8px 12px;
+  background: #f5f8fa;
+  border-bottom: 1px solid #e8e8e8;
+  font-size: 13px;
+  font-weight: bold;
+  color: #333;
+}
+.mod-report { padding: 9px 12px; border-bottom: 1px solid #e8e8e8; }
+.mod-report:hover { background: #f6f9fb; }
+.mod-head { font-size: 11px; color: #999; }
+.mod-head b { color: #333; font-size: 12px; }
+.mod-quote {
+  border-left: 2px solid #dbe8ee;
+  padding-left: 9px;
+  margin: 5px 0;
+  font-size: 13px;
+  color: #333;
+  word-wrap: break-word;
+}
+.mod-reason { font-size: 12px; color: #666; font-style: italic; margin-bottom: 5px; }
+.mod-actions { display: flex; gap: 6px; margin-top: 6px; }
+.mod-btn {
+  background: linear-gradient(#fff, #f0f0f0);
+  border: 1px solid #cbd6db;
+  border-radius: 4px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: bold;
+  color: #333;
+  cursor: pointer;
+}
+.mod-btn:hover { background: #f0f8fc; border-color: #a8c7d8; }
+.mod-btn:disabled { opacity: 0.5; cursor: wait; }
+.mod-btn.mod-ban { color: #d40d12; }

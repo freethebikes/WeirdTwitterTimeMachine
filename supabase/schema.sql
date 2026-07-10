@@ -116,6 +116,47 @@ create table if not exists public.blocks (
 );
 
 -- ---------------------------------------------------------------------------
+-- Moderation. Rows in moderators are added by hand in the SQL editor
+-- (see README "Moderation"); a moderator can ban/unban accounts and review
+-- reports. A banned profile keeps its content but can't write anything new
+-- (enforced in stamp_post/stamp_reply).
+-- ---------------------------------------------------------------------------
+
+alter table public.profiles add column if not exists banned_at timestamptz;
+
+create table if not exists public.moderators (
+  user_id uuid primary key references public.profiles (id) on delete cascade
+);
+
+-- Reports of user-generated content (present-day posts and replies). The
+-- reported author, handle, and text are snapshotted by stamp_report so the
+-- report still makes sense if the content is deleted; target_id is the
+-- permalink id ("u42" for a post, the parent tweet/post id for a reply).
+create table if not exists public.reports (
+  id bigint generated always as identity primary key,
+  reporter_id uuid references public.profiles (id) on delete set null,
+  reporter_handle text,
+  reported_id uuid not null references public.profiles (id) on delete cascade,
+  reported_handle text not null,
+  -- set null (not cascade) on delete: the snapshot columns keep the report
+  -- reviewable after the offending content is removed. Exactly-one-target
+  -- is enforced by stamp_report, not a check constraint, so these FK
+  -- actions can null the ids later without violating anything.
+  post_id bigint references public.posts (id) on delete set null,
+  reply_id bigint references public.replies (id) on delete set null,
+  target_id text,
+  content text not null,
+  reason text,
+  created_at timestamptz not null default now(),
+  resolved_at timestamptz,
+  constraint reports_reason_length check (reason is null or char_length(reason) <= 500)
+);
+
+-- one report per person per thing
+create unique index if not exists reports_reporter_post_idx on public.reports (reporter_id, post_id) where post_id is not null;
+create unique index if not exists reports_reporter_reply_idx on public.reports (reporter_id, reply_id) where reply_id is not null;
+
+-- ---------------------------------------------------------------------------
 -- Triggers
 -- ---------------------------------------------------------------------------
 
@@ -203,6 +244,9 @@ begin
   if auth.uid() is null then
     raise exception 'sign in to reply';
   end if;
+  if exists (select 1 from public.profiles where id = auth.uid() and banned_at is not null) then
+    raise exception 'this account is suspended';
+  end if;
   new.user_id := auth.uid();
   new.author := (select handle from public.profiles where id = auth.uid());
   new.created_at := now();
@@ -222,6 +266,9 @@ language plpgsql
 security definer set search_path = public
 as $$
 begin
+  if exists (select 1 from public.profiles where id = auth.uid() and banned_at is not null) then
+    raise exception 'this account is suspended';
+  end if;
   new.user_id := auth.uid();
   new.created_at := now();
   new.posted_day := (now() at time zone 'America/New_York')::date;
@@ -233,6 +280,138 @@ drop trigger if exists stamp_post on public.posts;
 create trigger stamp_post
   before insert on public.posts
   for each row execute function public.stamp_post();
+
+-- security definer so it can be used inside RLS policies without recursing
+-- into the moderators table's own policies
+create or replace function public.is_moderator()
+returns boolean
+language sql stable
+security definer set search_path = public
+as $$
+  select exists (select 1 from public.moderators where user_id = auth.uid());
+$$;
+
+-- banned_at is on profiles, which their owner may update — this keeps a
+-- banned user from simply patching their own suspension away.
+create or replace function public.profiles_ban_guard()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+begin
+  if new.banned_at is distinct from old.banned_at and not public.is_moderator() then
+    raise exception 'only a moderator can change a suspension';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists profiles_ban_guard on public.profiles;
+create trigger profiles_ban_guard
+  before update on public.profiles
+  for each row execute function public.profiles_ban_guard();
+
+-- The client reports with just {post_id|reply_id, reason}; everything else
+-- is resolved server-side so a report can't be forged or aimed at the wrong
+-- account. Only content by registered accounts is reportable (anonymous
+-- legacy replies have no account to ban).
+create or replace function public.stamp_report()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+declare t record;
+begin
+  if auth.uid() is null then
+    raise exception 'sign in to report';
+  end if;
+  new.reporter_id := auth.uid();
+  new.reporter_handle := (select handle from public.profiles where id = auth.uid());
+  new.created_at := now();
+  new.resolved_at := null;
+  if new.post_id is not null then
+    select p.user_id, pr.handle, p.text, 'u' || p.id as target
+      into t
+      from public.posts p join public.profiles pr on pr.id = p.user_id
+      where p.id = new.post_id;
+  elsif new.reply_id is not null then
+    select r.user_id, pr.handle, r.text,
+           coalesce('u' || r.post_id::text, r.tweet_id) as target
+      into t
+      from public.replies r join public.profiles pr on pr.id = r.user_id
+      where r.id = new.reply_id;
+  else
+    raise exception 'nothing to report';
+  end if;
+  if not found then
+    raise exception 'that post is not reportable';
+  end if;
+  new.reported_id := t.user_id;
+  new.reported_handle := t.handle;
+  new.content := t.text;
+  new.target_id := t.target;
+  return new;
+end;
+$$;
+
+drop trigger if exists stamp_report on public.reports;
+create trigger stamp_report
+  before insert on public.reports
+  for each row execute function public.stamp_report();
+
+-- Email the moderator about each new report, via the Resend API over
+-- pg_net. Entirely optional: it does nothing until the three Vault secrets
+-- exist (README "Moderation"), and a failure never blocks the report.
+create extension if not exists pg_net;
+
+create or replace function public.notify_report()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  api_key text;
+  to_email text;
+  site text;
+  html text;
+  quote_esc text;
+begin
+  select decrypted_secret into api_key from vault.decrypted_secrets where name = 'resend_api_key';
+  select decrypted_secret into to_email from vault.decrypted_secrets where name = 'moderator_email';
+  if api_key is null or to_email is null then
+    return new;
+  end if;
+  select decrypted_secret into site from vault.decrypted_secrets where name = 'site_url';
+  quote_esc := replace(replace(new.content, '&', '&amp;'), '<', '&lt;');
+  html := '<p><b>@' || new.reported_handle || '</b> was reported'
+       || coalesce(' by @' || new.reporter_handle, '') || ':</p>'
+       || '<blockquote>' || quote_esc || '</blockquote>'
+       || coalesce('<p>Reason: ' || replace(replace(new.reason, '&', '&amp;'), '<', '&lt;') || '</p>', '')
+       || coalesce('<p><a href="' || site || '#/post/' || new.target_id || '">View the post</a>'
+                || ' · <a href="' || site || '#/mod">Open moderation</a></p>', '');
+  perform net.http_post(
+    url := 'https://api.resend.com/emails',
+    headers := jsonb_build_object(
+      'Authorization', 'Bearer ' || api_key,
+      'Content-Type', 'application/json'
+    ),
+    body := jsonb_build_object(
+      'from', 'Weird Twitter Time Machine <onboarding@resend.dev>',
+      'to', jsonb_build_array(to_email),
+      'subject', 'Report: @' || new.reported_handle,
+      'html', html
+    )
+  );
+  return new;
+exception when others then
+  return new; -- the email is best-effort; the report row must still land
+end;
+$$;
+
+drop trigger if exists notify_report on public.reports;
+create trigger notify_report
+  after insert on public.reports
+  for each row execute function public.notify_report();
 
 -- ---------------------------------------------------------------------------
 -- Row level security. The anon key may read the public tables; writing
@@ -248,6 +427,8 @@ alter table public.posts enable row level security;
 alter table public.likes enable row level security;
 alter table public.follows enable row level security;
 alter table public.blocks enable row level security;
+alter table public.moderators enable row level security;
+alter table public.reports enable row level security;
 
 drop policy if exists "public read tweets" on public.tweets;
 create policy "public read tweets" on public.tweets for select using (true);
@@ -281,6 +462,12 @@ drop policy if exists "own update profile" on public.profiles;
 create policy "own update profile" on public.profiles
   for update using (auth.uid() = id) with check (auth.uid() = id);
 
+-- lets a moderator set/clear banned_at; profiles_ban_guard stops everyone
+-- else from touching that column even on their own row
+drop policy if exists "moderator update profiles" on public.profiles;
+create policy "moderator update profiles" on public.profiles
+  for update using (public.is_moderator()) with check (public.is_moderator());
+
 drop policy if exists "public read posts" on public.posts;
 create policy "public read posts" on public.posts for select using (true);
 
@@ -303,3 +490,24 @@ create policy "own follows" on public.follows
 drop policy if exists "own blocks" on public.blocks;
 create policy "own blocks" on public.blocks
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- you can see whether you yourself are a moderator; rows are only ever
+-- inserted by hand in the SQL editor
+drop policy if exists "own moderator row" on public.moderators;
+create policy "own moderator row" on public.moderators
+  for select using (auth.uid() = user_id);
+
+-- anyone signed in can file a report; only moderators see or resolve them.
+-- stamp_report forces reporter_id to auth.uid(), so the check is
+-- belt-and-braces like the other stamped writes.
+drop policy if exists "authed insert reports" on public.reports;
+create policy "authed insert reports" on public.reports
+  for insert to authenticated with check (auth.uid() = reporter_id);
+
+drop policy if exists "moderator read reports" on public.reports;
+create policy "moderator read reports" on public.reports
+  for select using (public.is_moderator());
+
+drop policy if exists "moderator update reports" on public.reports;
+create policy "moderator update reports" on public.reports
+  for update using (public.is_moderator()) with check (public.is_moderator());
