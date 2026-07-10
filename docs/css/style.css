@@ -137,6 +137,7 @@ a:hover { text-decoration: underline; }
   cursor: pointer;
   user-select: none;
 }
+.tm-autoscroll[hidden] { display: none; } /* display:flex would beat the hidden attribute */
 
 .likes .li-blurb { font-size: 12px; color: #666; margin-bottom: 8px; }
 .likes .li-blurb code { background: #f0f4f5; border-radius: 3px; padding: 0 3px; }
@@ -230,9 +231,11 @@ a:hover { text-decoration: underline; }
   text-align: center;
   align-self: center;
 }
-.tweet-head .act-block { visibility: hidden; font-size: 11px; font-weight: bold; color: #999; }
-.tweet-head:hover .act-block { visibility: visible; }
+.tweet-head .act-block, .tweet-head .act-follow { visibility: hidden; font-size: 11px; font-weight: bold; color: #999; }
+.tweet-head:hover .act-block, .tweet-head:hover .act-follow { visibility: visible; }
 .tweet-head .act-block:hover { color: #d40d12; text-decoration: none; }
+.tweet-head .act-follow:hover { color: #0084b4; text-decoration: none; }
+.tweet-head .act-follow.following { visibility: visible; color: #3b88c3; }
 .tweet-head .timestamp { margin-left: auto; color: #999; font-size: 12px; white-space: nowrap; }
 .tweet-head .timestamp a { color: #999; }
 .reply-context { font-size: 12px; color: #999; margin: 1px 0; }
@@ -747,8 +750,147 @@ body.phone-mode .ph-12 .ph-ampm, body.phone-mode .ph-14 .ph-ampm { display: none
     min-width: 0;
   }
   .tweet-head .act-block { display: none; } /* hover-only; no hover on touch */
+  .tweet-head .act-follow:not(.following) { display: none; }
 
   /* 16px inputs stop iOS Safari from zooming the page on focus */
   .tm-controls input[type="date"] { font-size: 16px; }
   .rc-row input, .reply-composer textarea { font-size: 16px; }
+
+  .topaccount .ta-handle { display: none; } /* avatar only; the bar is tight */
 }
+
+/* ---- accounts ---- */
+.topaccount { position: relative; margin-left: 8px; flex-shrink: 0; }
+.ta-signin {
+  background: linear-gradient(#55acee, #3b88c3);
+  border: 1px solid #3b88c3;
+  border-radius: 4px;
+  color: #fff;
+  font-weight: bold;
+  font-size: 12px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.ta-user {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  padding: 4px 2px;
+  cursor: pointer;
+  font: inherit;
+}
+.ta-avatar { width: 24px; height: 24px; border-radius: 4px; display: block; }
+.ta-handle { font-size: 12px; font-weight: bold; color: #666; }
+.ta-user:hover .ta-handle { color: #333; }
+.ta-menu {
+  position: absolute;
+  top: 36px;
+  right: 0;
+  min-width: 160px;
+  background: #fff;
+  border: 1px solid #cbd6db;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  padding: 4px 0;
+  z-index: 40;
+}
+.ta-menu a {
+  display: block;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: bold;
+  color: #666;
+}
+.ta-menu a:hover { background: #f5f8fa; color: #333; text-decoration: none; }
+
+/* sign-in / edit-profile modal */
+.wm-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.wm-box {
+  background: #fff;
+  border-radius: 6px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+  padding: 20px;
+  width: min(340px, 100%);
+}
+.wm-box h2 { font-size: 16px; color: #333; margin-bottom: 6px; }
+.wm-blurb { font-size: 12px; color: #666; margin-bottom: 12px; line-height: 1.4; }
+.wm-provider {
+  display: block;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 8px;
+  background: #f5f8fa;
+  border: 1px solid #cbd6db;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: bold;
+  color: #333;
+  cursor: pointer;
+}
+.wm-provider:hover { background: #eaf2f7; border-color: #a8c7d8; }
+.wm-divider { text-align: center; font-size: 11px; color: #999; margin: 10px 0; }
+.wm-magic { display: flex; gap: 6px; }
+.wm-magic input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid #cbd6db;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.wm-magic button, .wm-profile button {
+  background: linear-gradient(#55acee, #3b88c3);
+  border: 1px solid #3b88c3;
+  border-radius: 4px;
+  color: #fff;
+  font-weight: bold;
+  font-size: 12px;
+  padding: 6px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.wm-profile label { display: block; font-size: 12px; color: #666; font-weight: bold; margin-bottom: 10px; }
+.wm-profile input {
+  display: block;
+  width: 100%;
+  margin-top: 3px;
+  padding: 6px 8px;
+  border: 1px solid #cbd6db;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: normal;
+}
+.wm-status { font-size: 12px; color: #666; margin-top: 10px; min-height: 1em; }
+
+/* posts + replies from the present */
+.rc-as { flex: 1; font-size: 12px; color: #999; }
+.rc-as b { color: #666; }
+.rc-signin { font-size: 12px; color: #666; margin-top: 7px; }
+.rc-signin-btn {
+  background: linear-gradient(#55acee, #3b88c3);
+  border: 1px solid #3b88c3;
+  border-radius: 4px;
+  color: #fff;
+  font-weight: bold;
+  font-size: 11px;
+  padding: 3px 10px;
+  cursor: pointer;
+  margin-left: 4px;
+}
+.post-composer-wrap { padding: 10px 12px; border-bottom: 2px solid #dbe8ee; background: #f5f8fa; }
+.post-composer-wrap .reply-composer { margin-top: 0; }
+.present-note { padding: 6px 12px; font-size: 11px; color: #999; border-bottom: 1px solid #e8e8e8; }
+.tweet.user-post { background: #fbfdfe; }
+.tweet-head .up-badge { flex-shrink: 0; }
+.tweet-actions .act-like.liked { color: #ffac33; }

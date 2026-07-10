@@ -57,14 +57,20 @@ The site works two ways, controlled by `docs/js/config.js`:
 
 - **Static (default)** — posts load from the bundled JSON in `docs/data/`.
   Replies you add are saved in your browser's `localStorage` only, and are
-  not shared with other visitors.
+  not shared with other visitors. No accounts.
 - **Supabase** — posts, users, and replies are all served from a Supabase
-  project, so replies are shared and persistent across visitors.
+  project, and visitors can sign in (Google, GitHub, or an emailed link) to
+  post, reply, and keep likes/follows/blocks on the server. Signing in is
+  required to write; everyone can read.
 
 ### Setting up Supabase
 
 1. Create a project at [supabase.com](https://supabase.com).
-2. In the SQL editor, run `supabase/schema.sql`.
+2. In the SQL editor, run `supabase/schema.sql`. It's idempotent — re-run it
+   on an existing project to migrate it. Note: re-running it on a live
+   pre-accounts project removes anonymous replying (writes now require a
+   signed-in user), so deploy the matching `docs/` at the same time.
+   Existing anonymous replies are kept and still render.
 3. Import the archive data:
    ```
    SUPABASE_URL=https://xyz.supabase.co \
@@ -75,7 +81,50 @@ The site works two ways, controlled by `docs/js/config.js`:
    import since the public anon key can't write to `tweets`/`users`.)
 4. Edit `docs/js/config.js` and set `SUPABASE_URL` and `SUPABASE_ANON_KEY`
    (the anon/public key, safe to ship in client code — row level security
-   restricts it to reads, plus inserting into `replies`).
+   restricts it to reads; all writes require a signed-in user's token).
+
+### Setting up accounts (Supabase Auth)
+
+Sign-in is handled entirely by Supabase Auth — the site stays static files.
+
+1. **Redirect URLs** — in the Supabase dashboard under Authentication →
+   URL Configuration, set the Site URL to the deployed site
+   (`https://freethebikes.github.io/WeirdTwitterTimeMachine/`) and add both
+   it and `http://localhost:8000/` to the Redirect URLs allowlist.
+2. **Email link** — works out of the box (Authentication → Sign In /
+   Providers → Email, keep it enabled). The emailed link must be opened in
+   the same browser that requested it (the sign-in uses PKCE, and the code
+   verifier lives in that browser's storage). Supabase's built-in mailer is
+   rate-limited; fine for a hobby site.
+3. **Google** — create an OAuth client in the
+   [Google Cloud console](https://console.cloud.google.com/apis/credentials)
+   (type "Web application") with the authorized redirect URI
+   `https://<project-ref>.supabase.co/auth/v1/callback`, then paste its
+   client ID/secret into Authentication → Providers → Google.
+4. **GitHub** — create an OAuth app at
+   [github.com/settings/developers](https://github.com/settings/developers)
+   with the same callback URL, and paste its credentials into
+   Authentication → Providers → GitHub.
+
+New users get a profile automatically (handle derived from their GitHub
+username / Google name / email, deduplicated), editable from the account
+menu. Handles can never collide with an archive account's screen name — the
+past and the present share one namespace but never overlap.
+
+What signing in gets you:
+
+- **Replies** are attributed to your handle (stamped server-side; the
+  140-character limit still applies — it's the past).
+- **New posts** (280 characters — it's the present) land on today's date:
+  the composer appears when you're viewing today, and anyone visiting
+  today's date sees them alongside the archive's this-day posts.
+- **Permalinks** — every post, archive or new, has a shareable
+  `#/post/<id>` page showing it with its replies.
+- **Likes** (☆ under any post) and **follows** (hover a name) are private,
+  synced lists with their own pages, plus an "only accounts I follow"
+  timeline filter.
+- **Blocks** sync to the server; a block list built while signed out is
+  merged up on your next sign-in.
 
 ## Regenerating data from a fresh archive export
 
@@ -103,5 +152,7 @@ Then open http://localhost:8000/.
 ## Deployment
 
 The site is plain static files in `docs/`, served via GitHub Pages
-(Settings → Pages → Deploy from branch → `main` / `docs`). No build step,
-no login.
+(Settings → Pages → Deploy from branch → `main` / `docs`). No build step.
+Accounts and sign-in work fine from GitHub Pages — the OAuth flow round-trips
+through Supabase's servers, and the only secret (the service role key) never
+leaves your machine.
