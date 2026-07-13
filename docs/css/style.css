@@ -257,6 +257,7 @@ a:hover { text-decoration: underline; }
 
 .tweet-actions {
   display: flex;
+  align-items: baseline; /* the ↗ in "View original" has taller font metrics */
   gap: 18px;
   font-size: 12px;
   margin-top: 2px;

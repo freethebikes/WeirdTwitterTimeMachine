@@ -235,6 +235,22 @@
     return rows[0];
   }
 
+  // replies and likes cascade in the database; reports keep their snapshot
+  async function deletePost(article) {
+    const id = article.dataset.id;
+    if (!confirm("Delete this post? Replies from the future go with it.")) return;
+    try {
+      await sbFetch(`posts?id=eq.${postDbId(id)}`, { method: "DELETE" });
+    } catch (err) {
+      alert(`Couldn't delete the post (${err.message}).`);
+      return;
+    }
+    likedSet.delete(id);
+    lastTweets = lastTweets.filter((t) => t.id !== id);
+    article.remove();
+    if (currentView === "post") timeline.insertAdjacentHTML("beforeend", `<div class="state-box">Post deleted.</div>`);
+  }
+
   /* ---------- accounts ---------- */
 
   const todayNY = () => nyDayFmt.format(new Date());
@@ -473,7 +489,6 @@
       <h2>Sign in</h2>
       <p class="wm-blurb">Sign in to post, reply from the future, and keep your likes, follows, and blocks on every device.</p>
       <button type="button" class="wm-provider" data-provider="google">Sign in with Google</button>
-      <button type="button" class="wm-provider" data-provider="github">Sign in with GitHub</button>
       <div class="wm-divider">or</div>
       <form class="wm-magic">
         <input type="email" placeholder="you@example.com" required>
@@ -1433,6 +1448,7 @@
             <a href="#" class="act-reply">Reply</a>
             ${useSupabase ? `<a href="#" class="act-like${liked ? " liked" : ""}">${liked ? "★ Liked" : "☆ Like"}</a>` : ""}
             ${t.userPost && (!profile || t.user !== profile.handle) ? `<a href="#" class="act-report" title="Report this post to the moderators">Report</a>` : ""}
+            ${t.userPost && profile && t.user === profile.handle ? `<a href="#" class="act-delete" title="Delete this post and its replies">Delete</a>` : ""}
             ${t.userPost ? "" : `<a href="${esc(originalUrl(t))}" target="_blank" rel="noopener">View original ↗</a>`}
             ${opts.dayLink ? `<a href="#/${esc(t.day)}">Time-travel to this day</a>` : ""}
           </div>
@@ -1790,6 +1806,12 @@
           const tw = report.closest(".tweet");
           openReportModal({ post_id: Number(postDbId(tw.dataset.id)) }, tw.dataset.user, tw.querySelector(".tweet-text").textContent);
         }
+        return;
+      }
+      const del = e.target.closest(".act-delete");
+      if (del) {
+        e.preventDefault();
+        deletePost(del.closest(".tweet"));
         return;
       }
       // before .bl-unblock: the banned list's Unban button reuses that class
