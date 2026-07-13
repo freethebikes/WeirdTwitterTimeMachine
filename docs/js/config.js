@@ -9,6 +9,6 @@
 // Leave both blank to run fully static: posts load from the bundled JSON in
 // data/ and replies are kept in your browser's localStorage.
 window.WTTM_CONFIG = {
-  SUPABASE_URL: "",
-  SUPABASE_ANON_KEY: "",
+  SUPABASE_URL: "https://cgbvpxnhwhvubogqkqff.supabase.co",
+  SUPABASE_ANON_KEY: "sb_publishable_cSFZh0SkB1tnZfiDitLvDQ_3cyKABQE",
 };
